@@ -9,8 +9,10 @@ costituisce da sola una garanzia contro membership inference o estrazione.
 
 Un avversario registra oggi il traffico e dispone in futuro di capacità
 quantistiche. Il canale previsto combina X25519 e ML-KEM-768. L'autenticazione,
-il transcript binding, il combiner standard e il ciclo di rotazione devono
-ancora essere selezionati e verificati; il wrapper attuale è solo uno stub.
+il transcript binding, il profilo del combiner e il ciclo di rotazione devono
+ancora essere revisionati e verificati. HybridKEM implementa un combiner
+sperimentale con transcript binding, non un canale autenticato; HybridChannel
+resta uno stub. TODO: revisione da parte di un esperto.
 Non si rivendica sicurezza post-quantum dell'implementazione corrente.
 La scelta delle firme/autenticazione e delle ancore di fiducia resta TODO.
 

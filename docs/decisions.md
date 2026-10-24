@@ -15,3 +15,6 @@
 | 2026-10-24 | NumPy come Tensor del riferimento CPU | Test leggeri senza training o GPU | Provvisoria |
 | 2026-10-24 | JSONL schema_version=1, run_seed dalla configurazione | Riproducibilità pubblica separata da tutti i segreti crittografici; sostituisce seed=null | Adottata |
 | 2026-10-24 | A come simulatore centralizzato senza dropout | Verifica funzionale delle interfacce, non deployment sicuro | Adottata |
+| 2026-10-24 | Libreria KEM scelta: liboqs-python/liboqs candidata; OpenSSL TODO | Rilevamento delle capacità, preferenza ML-KEM-768; Kyber768 solo con opt-in esplicito, mai equiparato allo standard | Da decidere dopo check_env sul cluster |
+| 2026-10-24 | Combiner ibrido: X25519 || segreto PQ, poi HKDF-SHA256 con trascrizione | Segue la logica dei progetti di key exchange ibrido; costruzione sperimentale non rivista formalmente. TODO: revisione da parte di un esperto | Da rivedere |
+| 2026-10-24 | Trasporto del canale: TLS 1.3 ibrido via OpenSSL oppure canale applicativo | HybridKEM non fornisce autenticazione, framing di rete o protezione replay; nessuna equivalenza con un profilo TLS standard | Aperto |

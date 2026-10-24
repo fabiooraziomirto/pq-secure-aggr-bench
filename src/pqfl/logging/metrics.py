@@ -2,7 +2,7 @@ import hashlib
 import json
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from importlib.metadata import version
 
@@ -11,6 +11,30 @@ from importlib.metadata import version
 class RoundStats:
     bytes_sent: dict[str, int] = field(default_factory=dict)
     bytes_received: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class HandshakeSummary:
+    """Public aggregate measurements, with no field for cryptographic material."""
+
+    operation: str
+    mechanism: str
+    repetitions: int
+    warmup: int
+    percentiles_s: dict[str, float]
+    kind: str = field(default="sample_summary", init=False)
+    percentile_method: str = field(default="linear", init=False)
+    timing_scope: str = field(default="in_process_kem_api", init=False)
+    byte_scope: str = field(default="logical_payload_per_handshake", init=False)
+
+    def __post_init__(self):
+        if self.operation not in {"keygen", "encaps", "decaps", "handshake"}:
+            raise ValueError("Unknown handshake operation")
+        if self.repetitions <= 0 or self.warmup < 0:
+            raise ValueError("Invalid sample counts")
+        if any(not isinstance(value, (int, float)) or value < 0
+               for value in self.percentiles_s.values()):
+            raise ValueError("Percentile durations must be nonnegative numbers")
 
 
 class ByteCounter:
@@ -27,9 +51,10 @@ class ByteCounter:
 class JSONLWriter:
     """Allowlisted metadata only; no caller-supplied arbitrary payloads."""
 
-    def __init__(self, path, *, run_id, config_hash, scheme, dp_level, run_seed):
+    def __init__(self, path, *, run_id, config_hash, scheme, dp_level, run_seed, library_versions=None):
         if type(run_seed) is not int or run_seed < 0:
             raise ValueError("Set run_seed to a nonnegative experiment seed in the configuration")
+        self.library_versions = dict(library_versions or {})
         self.path = path
         self.metadata = dict(run_id=run_id, config_hash=config_hash,
                              scheme=scheme, dp_level=dp_level, run_seed=run_seed, schema_version=1)
@@ -38,7 +63,7 @@ class JSONLWriter:
             pass
 
     @classmethod
-    def from_config(cls, path, config_path):
+    def from_config(cls, path, config_path, *, library_versions=None):
         """Read public experiment metadata; never use run_seed for real KEMs."""
         import yaml
 
@@ -51,16 +76,21 @@ class JSONLWriter:
         return cls(path, run_id=config["run_id"],
                    config_hash=hashlib.sha256(canonical).hexdigest(),
                    scheme=config["scheme"], dp_level=config["dp_level"],
-                   run_seed=config["run_seed"])
+                   run_seed=config["run_seed"], library_versions=library_versions)
 
-    def record(self, *, round_idx, phase, duration_s, stats):
+    def record(self, *, round_idx, phase, duration_s, stats, summary=None):
         if phase not in {"compute", "crypto", "comm"}:
             raise ValueError("Unknown phase")
         row = dict(self.metadata, round=round_idx, phase=phase,
                    duration_s=duration_s, bytes_sent=stats.bytes_sent,
                    bytes_received=stats.bytes_received, peak_mem_gpu_mb=None,
                    peak_mem_host_mb=None, timestamp=datetime.now(timezone.utc).isoformat(),
-                   library_versions={name: version(name) for name in ("numpy", "cryptography")})
+                   library_versions={**{name: version(name) for name in ("numpy", "cryptography")},
+                                     **self.library_versions})
+        if summary is not None:
+            if not isinstance(summary, HandshakeSummary):
+                raise TypeError("summary must be a HandshakeSummary, not an arbitrary payload")
+            row["summary"] = asdict(summary)
         with open(self.path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, allow_nan=False) + "\n")
 

@@ -9,7 +9,7 @@ from pqfl.aggregators.scheme_a import SchemeA
 from pqfl.aggregators.scheme_b import SchemeB
 from pqfl.aggregators.scheme_c import SchemeC
 from pqfl.channel.hybrid import HybridChannel
-from pqfl.kem.backends import LibOQSKEM, OpenSSLKEM
+from pqfl.kem.backends import OpenSSLKEM
 from pqfl.logging.metrics import ByteCounter, JSONLWriter
 from pqfl.masking.core import quantize, dequantize, pairwise_mask, recover_masks
 
@@ -135,7 +135,7 @@ def test_byte_counter():
 
 
 def test_stubs_fail_closed():
-    for backend in (LibOQSKEM, OpenSSLKEM):
+    for backend in (OpenSSLKEM,):
         with pytest.raises(NotImplementedError):
             backend()
     for scheme in (SchemeB(), SchemeC()):

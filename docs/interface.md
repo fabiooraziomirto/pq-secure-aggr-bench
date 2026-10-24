@@ -46,17 +46,18 @@ ChaCha20 di cryptography espande con nonce di 16 byte nullo: la chiave derivata
 cambia per coppia/round. Ogni elemento usa 8 byte little-endian troncati ai bit
 modulari; l'ID minore aggiunge, il maggiore sottrae. Nessun round si può riusare.
 `recover_masks(...)` è uno stub per secret sharing dei seed; dropout rifiutato.
-Il canale ibrido autenticato X25519 + ML-KEM-768 e i backend reali restano stub.
+Il backend liboqs reale e `pqfl.kem.HybridKEM` implementano ora KEM;
+il trasporto autenticato `HybridChannel` e il backend OpenSSL restano stub.
 
-Esempio di contratto, da completare con un backend verificato (non eseguibile
-finché tale backend non esiste):
+Esempio di contratto da completare con configurazione e backend verificati sul cluster:
 
 ```python
 import numpy as np
 from pqfl.aggregators.scheme_a import SchemeA
 from pqfl.logging.metrics import JSONLWriter
 
-# kem = verified_backend  # TODO
+from pqfl.kem import HybridKEM
+# kem = HybridKEM()  # Requires reviewed native liboqs and Python binding.
 # scale_bits, modulus_bits = reviewed_configuration  # TODO
 writer = JSONLWriter.from_config("run.jsonl", "configs/experiment.yaml")
 # Set run_seed and other public metadata in the YAML before running.
@@ -109,3 +110,39 @@ precisione e tolleranza testata; MPC deve dichiarare dominio e conversione.
 Dichiarare librerie/versioni realmente validate, numero/soglia di partecipanti,
 assunzioni su collusione e dropout. Non consegnare benchmark o dati clinici.
 Qualsiasi confronto di prestazioni richiede prima la stessa frontiera di misura.
+
+## Backend e composizione ibrida
+
+`LibOQSKEM` usa context manager del binding liboqs-python per generazione,
+esportazione della chiave privata, encaps e decaps. Nessuna installazione
+automatica; dipendenze assenti sollevano `BackendUnavailable` con istruzioni.
+Preferisce ML-KEM-768. Kyber768 richiede `allow_legacy=True`, produce warning e
+mantiene il nome legacy; non è una variante intercambiabile dello standard.
+Le versioni reali e il nome del meccanismo sono disponibili in `library_versions`.
+
+`HybridKEM(pq_kem=None)` usa ML-KEM-768 reale per default. L'iniezione esplicita
+consente test con FakeKEM confinata ai test. La chiave pubblica contiene nome
+algoritmo, chiave X25519 destinatario (32 byte) e chiave PQ; la chiave privata
+contiene chiave X25519 privata, chiave PQ privata e chiave pubblica completa.
+Il ciphertext contiene chiave X25519 effimera mittente e ciphertext PQ.
+
+Codifica v1: prefisso ASCII `pqfl/hybrid-kem/v1/`, tag `pk`, `sk`, `ct` o
+`combiner`, poi campi con lunghezza uint32 big-endian e byte esatti, nel precedente
+ordine. Rifiutati tag/versioni errati, troncamenti, byte finali e nomi incompatibili.
+Il segreto finale è HKDF-SHA256 a 32 byte, salt assente, input
+`shared_X25519 || shared_PQ`. L'info è la codifica `combiner` con due campi:
+chiave pubblica ibrida completa e ciphertext ibrido completo. Include così nome,
+entrambe le chiavi pubbliche e le componenti ciphertext; in X25519 il ciphertext
+KEM è la chiave effimera. Chiavi effimere da cryptography, nessun run_seed usato.
+Non è fornita cancellazione garantita dei byte segreti nella memoria Python.
+
+La costruzione non è stata rivista formalmente: TODO revisione da parte di un
+esperto. Non fornisce autenticazione, protezione replay o trasporto. La scelta
+TLS 1.3 ibrido via OpenSSL/canale applicativo resta aperta.
+
+Nel JSONL `library_versions` può includere versioni native e meccanismo reali.
+Per la strumentazione usare `HandshakeSummary`, non payload liberi.
+L'harness registra un campo opzionale `summary` con operazione, meccanismo,
+ripetizioni, warm-up, percentili in secondi (interpolazione lineare), frontiera
+temporale e frontiera dei byte. `duration_s` è la mediana dei campioni; ogni riga
+è un riepilogo e non una singola osservazione o un round di aggregazione.

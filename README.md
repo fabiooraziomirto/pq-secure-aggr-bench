@@ -23,13 +23,24 @@ FakeKEM esiste solo in `tests/conftest.py`, non nel pacchetto installato, ed è
 INSECURE. È disponibile un adapter reale liboqs con import lazy, da verificare sul cluster;
 non è un deployment pronto per produzione.
 
-## Aggiungere uno schema
+## Come aggiungere uno schema
 
-Implementare `Aggregator` in `src/pqfl/aggregators/`, con la stessa API e la
-strumentazione comune. B (CKKS a soglia) e C (MPC a tre parti) sono stub che
-sollevano `NotImplementedError`. Specifica, esempi e criteri di consegna:
-[interfaccia](docs/interface.md). Consultare anche il
-[modello di minaccia](docs/threat_model.md) e le [decisioni](docs/decisions.md).
+1. Crea il modulo dell’aggregatore in src/pqfl/aggregators.
+2. Implementa setup, rekey, aggregate_round e stats dell’ABC.
+3. Dichiara actors, participation_policy e rekey_policy.
+4. Elenca i communication_edges per setup, round e rekey.
+5. Serializza ogni payload e consegnalo tramite ByteCounter.send.
+6. Includi upload e diffusione del risultato nel registro dei trasferimenti.
+7. Usa i timer comuni auth, crypto, compute e comm per attore.
+8. Dichiara tolleranza numerica, librerie e stato di sicurezza del core.
+9. Aggiungi la classe ad AGGREGATOR_REGISTRY e configura il factory dei test.
+10. Esegui la suite di conformità e make test-real per ogni backend nativo.
+
+B e C sono ora INSECURE_STUB: somma in chiaro, nessuna HE/MPC. Il loro traffico
+serializzato non rappresenta costi CKKS/MPC e non può essere usato come risultato
+del paper. Specifica in [docs/interface.md](docs/interface.md), assunzioni in
+[docs/threat_model.md](docs/threat_model.md) e decisioni in
+[docs/decisions.md](docs/decisions.md).
 
 `configs/experiment.yaml` è un template con TODO, non una configurazione eseguibile.
 Non sono presenti runner di esperimenti. Container Docker e Apptainer sono
@@ -107,7 +118,7 @@ Senza backend o variabile d'ambiente il test salta con motivo esplicito.
 ### Harness di handshake (non eseguito)
 
 ```bash
-# Sostituire tutti i TODO con scelte concordate; non è un comando pronto all'uso.
+# Replace every TODO with agreed choices; this is not a ready-to-run command.
 python scripts/bench_handshake.py --config configs/experiment.yaml \
   --output runs/handshake.jsonl --kem hybrid \
   --repetitions TODO --warmup TODO --percentiles TODO
@@ -186,3 +197,13 @@ La fase auth conta chiavi identità e firme; schema_version resta 2.
 Il nome API esatto è `participation_policy="all_or_abort"`;
 siti mancanti causano MissingParticipantError e nessun risultato parziale.
 I test ML-DSA richiedono liboqs nativa e sono marcati requires_oqs.
+
+## Suite di conformità
+
+`python -m pytest -q tests/test_aggregator_contract.py` verifica registro e byte,
+somma, diffusione, policy di partecipazione e rekey/no-op. A reale usa ML-KEM
+ibrida e identità ML-DSA: è un test requires_oqs, non sostituito da FakeKEM se
+manca il backend. A funzionale è un caso aggiuntivo esplicitamente INSECURE.
+B/C restano stub senza crittografia. Il controllo di positività riguarda i
+collegamenti effettivi dichiarati, senza imporre traffico full mesh a una stella.
+Restano aperti il modello di collusione dei core B/C e la presentazione di H6.

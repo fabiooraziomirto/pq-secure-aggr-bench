@@ -79,3 +79,8 @@ e verifica della correttezza del training. Attacchi di membership inference ed
 estrazione saranno moduli separati dei colleghi, non eseguiti in questa base.
 Nei log è ammesso solo `run_seed`, seed pubblico di riproducibilità. Non conservare
 chiavi, seed crittografici, segreti condivisi, ciphertext, maschere o tag di conferma nei log; nessun dato clinico nei test.
+
+Gli attuali core B e C sono INSECURE_STUB e rivelano gli aggiornamenti al reducer:
+nessuna garanzia CKKS/MPC sopra descritta si applica a questi stub. La loro policy
+all_or_abort è una scelta funzionale provvisoria; i colleghi dovranno dichiarare
+policy e garanzie dei core reali prima di un confronto scientifico.

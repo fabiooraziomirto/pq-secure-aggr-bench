@@ -64,3 +64,21 @@ class InsecureTestAuth:
 
     def verify(self, verifier, site_id, epoch, public_key, proof):
         pass
+
+
+def real_auth_for_sites(site_ids):
+    """Real ephemeral test identities; production provisions long-term identities."""
+    from pqfl.auth import MLDSAAuth
+    from pqfl.kem.backends import BackendUnavailable, load_oqs
+    try:
+        oqs = load_oqs()
+        if 'ML-DSA-65' not in oqs.get_enabled_sig_mechanisms():
+            pytest.skip('Native liboqs does not enable ML-DSA-65')
+        public_keys, secrets = {}, {}
+        for site in site_ids:
+            with oqs.Signature('ML-DSA-65') as signer:
+                public_keys[site] = bytes(signer.generate_keypair())
+                secrets[site] = bytes(signer.export_secret_key())
+        return MLDSAAuth(public_keys, secrets, {site: dict(public_keys) for site in site_ids})
+    except BackendUnavailable as exc:
+        pytest.skip(str(exc))

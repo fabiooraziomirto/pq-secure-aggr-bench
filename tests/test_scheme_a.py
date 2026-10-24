@@ -153,13 +153,14 @@ def test_byte_counter():
         counter.transfer("A", "B", -1)
 
 
-def test_stubs_fail_closed():
+def test_unimplemented_crypto_fails_closed_and_stubs_are_labelled():
     for backend in (OpenSSLKEM,):
         with pytest.raises(NotImplementedError):
             backend()
     for scheme in (SchemeB(), SchemeC()):
-        with pytest.raises(NotImplementedError):
-            scheme.setup(SITES)
+        assert scheme.security_status == "INSECURE_STUB"
+        scheme.setup(SITES)
+        np.testing.assert_array_equal(scheme.aggregate_round(0, UPDATES), sum(UPDATES.values()))
     with pytest.raises(NotImplementedError):
         HybridChannel().establish()
     with pytest.raises(NotImplementedError):

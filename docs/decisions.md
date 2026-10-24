@@ -23,7 +23,7 @@
 | 2026-10-24 | JSONL schema_version=2, site, epoch e delta dei byte | Tempi attribuibili per sito, righe sommabili per operazione; sostituisce gli snapshot cumulativi | Adottata |
 | 2026-10-24 | Politica di rekey: frequenza TODO, chiamata esplicita | Nuove chiavi e seed per tutte le coppie, epoch crescente, round univoci nell’intera sessione | Aperta |
 | 2026-10-24 | Conferma bidirezionale HKDF/HMAC con ruoli e trascrizione | Rilevare segreti diversi da rifiuto implicito senza confronto diretto dei seed; contare i tag | Adottata |
-| 2026-10-24 | clip_bound opzionale e controllo esatto dell’overflow nel simulatore | Il costruttore non conosce n: valida il limite minimo per 2 siti; setup valida n e margine di arrotondamento. In produzione richiede un limite verificato localmente | Adottata |
+| 2026-10-24 | clip_bound opzionale e controllo esatto dell’overflow nel simulatore (storico) | Il costruttore non conosce n: valida il limite minimo per 2 siti; setup valida n e margine di arrotondamento. In produzione richiede un limite verificato localmente | Superata da E: limite obbligatorio |
 | 2026-10-24 | Vettore dorato mask/v2 generato dalla funzione corrente | Regressione di compatibilità, non controllo indipendente né vettore NIST | Adottata |
 | 2026-10-24 | Interoperabilità liboqs/OpenSSL condizionata alle capacità reali | Opzioni encap/decap verificate nell’help locale; resta da eseguire con binding e libreria sul cluster | Da verificare |
 
@@ -38,6 +38,12 @@
 | 2026-10-24 | E: MLDSAAuth su ML-DSA-65 con identità pinnate | Firma legata a dominio, epoca, proprietario e chiave KEM; nativa non disponibile qui | Implementata, test reali bloccati |
 | 2026-10-24 | E: clip_bound obbligatorio e all_or_abort | Limite verificato appena noto n; no output parziale o recovery | Adottata |
 | 2026-10-24 | E: fase auth aggiunta, schema_version resta 2 | Separare i costi di autenticazione dai costi KEM con conteggio dei messaggi concreti | Adottata |
+| 2026-10-24 | F: ABC con rekey, actors, policy e collegamenti dichiarati | Stessa frontiera e suite parametrizzata sul registro A/B/C; caso A reale separato da A funzionale | Adottata |
+| 2026-10-24 | F: ByteCounter.send e registro senza payload in RoundStats | Len del messaggio consegnato, verifica assenza di trasferimenti non registrati, nessun campo JSON aggiuntivo | Adottata |
+| 2026-10-24 | F: positività dei byte sui collegamenti dichiarati | Un full mesh obbligatorio altererebbe protocolli a stella; niente messaggi artificiali | Precisazione rispetto al requisito letterale |
+| 2026-10-24 | F: B/C INSECURE_STUB con somma in chiaro e rekey no-op | Base funzionale sostituibile, non implementazione HE/MPC né risultato sperimentale | Provvisoria |
+| 2026-10-24 | F: collusione reducer più sito per B/C | Responsabili dei core devono dichiarare le garanzie; un solo seed non basta a togliere tutte le maschere di un sito in A a tre parti | Aperta |
+| 2026-10-24 | F: H6 mediana dei componenti o end-to-end | Scelta di reporting da discutere con i colleghi, non assunta dall’harness | Aperta |
 
 ### D: comandi eseguiti e provenienza
 

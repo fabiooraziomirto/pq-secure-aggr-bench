@@ -103,3 +103,23 @@ def test_all_or_abort_produces_no_partial_result(fake_kem_factory):
 def test_authentication_message_canonical_tuple():
     assert json.loads(authentication_message('A', 7, b'public-test-input')) == [
         'pqfl/auth/v1', 7, 'A', b'public-test-input'.hex()]
+
+
+def test_mitm_at_delivery_boundary_is_rejected_before_seed(fake_kem_factory, monkeypatch):
+    from pqfl.logging.metrics import ByteCounter
+    kem, keys, auth = provisioned(fake_kem_factory)
+    calls, changed = [], False
+    original_send = ByteCounter.send
+    def intercepted(counter, sender, receiver, message):
+        nonlocal changed
+        if not changed and (sender, receiver) == ('B', 'A'):
+            changed = True
+            message = bytes([message[0] ^ 1]) + message[1:]
+        return original_send(counter, sender, receiver, message)
+    monkeypatch.setattr(ByteCounter, 'send', intercepted)
+    monkeypatch.setattr(kem, 'encaps', lambda public: calls.append(public))
+    agg = SchemeA(kem, clip_bound=1., scale_bits=12, modulus_bits=32,
+                  authenticator=auth, key_provider=lambda owner, epoch: keys[epoch, owner])
+    with pytest.raises(AuthenticationError):
+        agg.setup(SITES)
+    assert changed and not calls and not agg.seeds

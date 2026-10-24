@@ -1,16 +1,5 @@
-from pqfl.aggregators.base import Aggregator
-from pqfl.masking.core import Tensor
-from pqfl.logging.metrics import RoundStats
+from pqfl.aggregators.insecure_stub import InsecureSumStub
 
 
-class SchemeB(Aggregator):
-    """Pending colleague implementation; use shared Metrics and byte semantics."""
-
-    def setup(self, site_ids: list[str]) -> None:
-        raise NotImplementedError("Scheme B pending")
-
-    def aggregate_round(self, round_idx: int, updates: dict[str, Tensor]) -> Tensor:
-        raise NotImplementedError("Scheme B pending")
-
-    def stats(self) -> RoundStats:
-        raise NotImplementedError("Scheme B pending")
+class SchemeB(InsecureSumStub):
+    """INSECURE_STUB plaintext sum. TODO: colleague's threshold CKKS core."""

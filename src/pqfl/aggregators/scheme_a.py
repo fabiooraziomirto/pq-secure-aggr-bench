@@ -5,7 +5,7 @@ import math
 from numbers import Real
 from typing import Callable
 
-from pqfl.auth import Authenticator, PinnedFingerprintAuth
+from pqfl.auth import Authenticator, AuthProof, PinnedFingerprintAuth
 
 import numpy as np
 
@@ -26,6 +26,8 @@ class SchemeA(Aggregator):
     """
 
     participation_policy = "all_or_abort"
+    rekey_policy = "refresh_all_pairs"
+    security_status = "FUNCTIONAL_SIMULATOR"
 
     def __init__(self, kem: KEM, *, scale_bits: int, modulus_bits: int, clip_bound: float,
                  writer=None, authenticator: Authenticator | None = None,
@@ -44,6 +46,8 @@ class SchemeA(Aggregator):
         self._validate_clip_count(2)
         self.writer = writer
         self.sites = None
+        self.actors = []
+        self.communication_edges = {}
         self.used_rounds = set()
         self.epoch = 0
         self._ready = False
@@ -67,6 +71,9 @@ class SchemeA(Aggregator):
         self._validate_clip_count(len(site_ids))
         self.sites = sorted(site_ids)
         self.actors = [*self.sites, "reducer"]
+        pair_edges = {(left, right) for left in self.sites for right in self.sites if left != right}
+        round_edges = {(site, "reducer") for site in self.sites} | {("reducer", site) for site in self.sites}
+        self.communication_edges = {"setup": pair_edges, "rekey": set(pair_edges), "round": round_edges}
         self._exchange_keys()
         self.setup_stats = deepcopy(self.metrics.counter.value)
 
@@ -100,18 +107,19 @@ class SchemeA(Aggregator):
             public, secret = keys[right]
             with self.metrics.phase_timer("auth", site=left):
                 proof = proofs[right]
-                self.metrics.counter.transfer(right, left, len(public))
-                if proof.identity_public:
-                    self.metrics.counter.transfer(right, left, len(proof.identity_public))
-                if proof.signature:
-                    self.metrics.counter.transfer(right, left, len(proof.signature))
-                self.authenticator.verify(left, right, self.epoch, public, proof)
+                public = self.metrics.counter.send(right, left, public)
+                identity = (self.metrics.counter.send(right, left, proof.identity_public)
+                            if proof.identity_public else b"")
+                signature = (self.metrics.counter.send(right, left, proof.signature)
+                             if proof.signature else b"")
+                received_proof = AuthProof(identity, signature)
+                self.authenticator.verify(left, right, self.epoch, public, received_proof)
             with self.metrics.phase_timer("crypto", site=left):
                 ciphertext, seed = self.kem.encaps(public)
-                self.metrics.counter.transfer(left, right, len(ciphertext))
+                ciphertext = self.metrics.counter.send(left, right, ciphertext)
                 left_key = confirmation.confirmation_key(seed, self.epoch, left, right, public, ciphertext)
                 left_tag = confirmation.confirmation_tag(left_key, "left")
-                self.metrics.counter.transfer(left, right, len(left_tag))
+                left_tag = self.metrics.counter.send(left, right, left_tag)
             with self.metrics.phase_timer("crypto", site=right):
                 recovered = self.kem.decaps(secret, ciphertext)
                 right_key = confirmation.confirmation_key(recovered, self.epoch, left, right,
@@ -120,7 +128,7 @@ class SchemeA(Aggregator):
                 if not hmac.compare_digest(left_tag, expected_left):
                     raise KeyConfirmationError("Peer key confirmation failed")
                 right_tag = confirmation.confirmation_tag(right_key, "right")
-                self.metrics.counter.transfer(right, left, len(right_tag))
+                right_tag = self.metrics.counter.send(right, left, right_tag)
             with self.metrics.phase_timer("crypto", site=left):
                 expected_right = confirmation.confirmation_tag(left_key, "right")
                 if not hmac.compare_digest(right_tag, expected_right):
@@ -171,8 +179,8 @@ class SchemeA(Aggregator):
                 signed_total += signed.astype(object)
             masked = self._masked_site(site, round_idx, quantized)
             with self.metrics.phase_timer("compute", site=site):
-                messages[site] = serialize_masked(masked, self.modulus_bits)
-                self.metrics.counter.transfer(site, "reducer", len(messages[site]))
+                payload = serialize_masked(masked, self.modulus_bits)
+                messages[site] = self.metrics.counter.send(site, "reducer", payload)
         with self.metrics.phase_timer("compute", site="reducer"):
             if np.any(signed_total < -modulus // 2) or np.any(signed_total >= modulus // 2):
                 raise AggregateOverflowError("Signed aggregate exceeds the selected modular range")
@@ -180,12 +188,12 @@ class SchemeA(Aggregator):
             for message in messages.values():
                 total = (total + deserialize_masked(message, shape, self.modulus_bits)) % modulus
             result_message = serialize_masked(total, self.modulus_bits)
-            for site in self.sites:
-                self.metrics.counter.transfer("reducer", site, len(result_message))
+            delivered = {site: self.metrics.counter.send("reducer", site, result_message)
+                         for site in self.sites}
         result = None
         for site in self.sites:
             with self.metrics.phase_timer("compute", site=site):
-                received = deserialize_masked(result_message, shape, self.modulus_bits)
+                received = deserialize_masked(delivered[site], shape, self.modulus_bits)
                 decoded = dequantize(received, self.scale_bits, self.modulus_bits)
                 if result is None:
                     result = decoded

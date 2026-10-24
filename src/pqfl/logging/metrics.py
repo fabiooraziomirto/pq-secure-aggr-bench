@@ -7,10 +7,18 @@ from datetime import datetime, timezone
 from importlib.metadata import version
 
 
+@dataclass(frozen=True)
+class Transfer:
+    sender: str
+    receiver: str
+    size: int
+
+
 @dataclass
 class RoundStats:
     bytes_sent: dict[str, int] = field(default_factory=dict)
     bytes_received: dict[str, int] = field(default_factory=dict)
+    transfers: list[Transfer] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -44,8 +52,26 @@ class ByteCounter:
     def transfer(self, sender: str, receiver: str, size: int):
         if type(size) is not int or size < 0:
             raise ValueError("Byte count must be nonnegative")
+        if sender not in self.value.bytes_sent or receiver not in self.value.bytes_received:
+            raise ValueError("Unknown transfer actor")
+        if sender == receiver:
+            raise ValueError("Self-transfers are not protocol messages")
+        self.value.transfers.append(Transfer(sender, receiver, size))
         self.value.bytes_sent[sender] += size
         self.value.bytes_received[receiver] += size
+
+
+    def send(self, sender: str, receiver: str, message: bytes) -> bytes:
+        """Simulated delivery of exact serialized bytes through one count boundary.
+
+        The ledger retains actor IDs and sizes only, never payloads or secrets.
+        A future transport adapter must preserve this boundary and account for
+        any additional protocol messages explicitly.
+        """
+        if not isinstance(message, bytes):
+            raise TypeError("Protocol payload must be serialized bytes")
+        self.transfer(sender, receiver, len(message))
+        return message
 
 
 class JSONLWriter:

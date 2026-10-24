@@ -5,8 +5,9 @@ import json
 import numpy as np
 import pytest
 
-from pqfl.auth import AuthenticationError, MLDSAAuth
-from pqfl.kem.backends import BackendUnavailable, LibOQSKEM, load_oqs
+from pqfl.auth import AuthenticationError
+from conftest import real_auth_for_sites
+from pqfl.kem.backends import BackendUnavailable, LibOQSKEM
 from pqfl.kem.hybrid import HybridKEM
 from pqfl.aggregators.scheme_a import SchemeA
 from pqfl.logging.metrics import JSONLWriter
@@ -17,19 +18,7 @@ SITES = ['A', 'B', 'C']
 
 @pytest.fixture
 def real_auth():
-    try:
-        oqs = load_oqs()
-        if 'ML-DSA-65' not in oqs.get_enabled_sig_mechanisms():
-            pytest.skip('Native liboqs does not enable ML-DSA-65')
-        public_keys, secrets = {}, {}
-        for site in SITES:
-            with oqs.Signature('ML-DSA-65') as signer:
-                public_keys[site] = bytes(signer.generate_keypair())
-                secrets[site] = bytes(signer.export_secret_key())
-        return MLDSAAuth(public_keys, secrets, {site: dict(public_keys) for site in SITES})
-    except BackendUnavailable as exc:
-        pytest.skip(str(exc))
-
+    return real_auth_for_sites(SITES)
 
 def test_mldsa_binds_epoch_owner_and_kem_public_key(real_auth):
     public = b'public test input, not a KEM vector'

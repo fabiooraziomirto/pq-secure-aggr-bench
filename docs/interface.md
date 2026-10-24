@@ -1,259 +1,222 @@
 # Interfaccia comune
 
-## Contratto
+## Contratto obbligatorio
 
 ```python
-class KEM(Protocol):
-    def keygen(self) -> tuple[bytes, bytes]: ...  # public, secret
-    def encaps(self, public: bytes) -> tuple[bytes, bytes]: ...  # ciphertext, shared_secret
-    def decaps(self, secret: bytes, ciphertext: bytes) -> bytes: ...
-
 class Aggregator(ABC):
+    actors: list[str]
+    participation_policy: str
+    rekey_policy: str
+    communication_edges: dict[str, set[tuple[str, str]]]
+
     def setup(self, site_ids: list[str]) -> None: ...
+    def rekey(self) -> None: ...
     def aggregate_round(self, round_idx: int, updates: dict[str, Tensor]) -> Tensor: ...
     def stats(self) -> RoundStats: ...
 ```
 
-`Tensor` è attualmente un array NumPy reale, convertito in float64 in ingresso;
-forme identiche, tutti i siti presenti e ID stringa univoci non vuoti.
-L'output è la **somma**, mai la media, nella forma iniziale e in float64.
-La pipeline deve concordare separatamente ordinamento degli adapter, flattening,
-dtype e metadati di forma. Nessun dato clinico attraversa l'interfaccia.
-Il simulatore riceve aggiornamenti sintetici; in produzione gli aggiornamenti
-rimangono nel processo locale fino alla protezione prevista dal protocollo.
+`Tensor` è un array NumPy reale, convertito in float64. L’output è la **somma**,
+mai la media, con forma preservata e tolleranza numerica dichiarata. Forma,
+ordine degli adapter LoRA, dtype e flattening sono concordati fuori banda.
+Gli input del simulatore sono sintetici; in produzione ogni aggiornamento resta
+locale fino alla protezione prevista dal protocollo. Nessun dato clinico nei test.
 
-`setup` è chiamato una volta per istanza/sessione. I round sono interi non
-negativi univoci nella sessione. Riavviare una sessione reale richiederà nuove
-chiavi e un identificatore di sessione concordato; la gestione persistente è TODO.
-`stats()` restituisce una copia dei contatori per attore (siti e `reducer`) dell'ultima operazione:
-dopo setup sono costi setup, dopo un round solo i costi di quel round.
-Lo schema A conserva `setup_stats` e, dopo rekey, `rekey_stats`; non sono
-estensioni obbligatorie API. `rekey()` ripete lo scambio per tutte le coppie,
-genera n−1 nuove coppie di chiavi e incrementa epoch. `used_rounds` non si azzera:
-gli indici restano univoci in tutta la sessione. Frequenza automatica assente:
-`rekey_every_rounds: TODO`, decide il chiamante. Setup usa epoch=0, rekey round=null
-e la nuova epoca. Una conferma fallita invalida la disponibilità dei seed: nessun
-round è ammesso finché un nuovo rekey non termina con successo.
+`setup` è chiamato una volta, accetta ID stringa univoci non vuoti, almeno due.
+`actors` elenca tutti i siti e gli altri attori, qui `reducer` (ID riservato).
+`participation_policy="all_or_abort"`: un sito mancante o inatteso solleva
+`MissingParticipantError`, sottoclasse di ValueError, prima di traffico, consumo
+del round o output parziale. Forma errata solleva ValueError prima del traffico.
+I round sono interi non negativi univoci nell’intera sessione, anche dopo rekey;
+un round iniziato e poi fallito non deve riutilizzare le maschere.
 
-## Schema A
+`rekey_policy="refresh_all_pairs"` in A rigenera n−1 coppie di chiavi e tutti i
+seed, incrementa epoch e non azzera used_rounds. `rekey_policy="no_op"` negli
+stub B/C dichiara assenza di chiavi: epoch invariata, contatori dell’operazione
+azzerati e nessun messaggio. La politica dei futuri core B/C dovrà essere esplicita.
+`rekey_every_rounds: TODO` non introduce frequenze automatiche.
 
-`SchemeA(kem, scale_bits=..., modulus_bits=..., clip_bound=..., writer=None, authenticator=None, key_provider=None)` richiede entrambi
-i parametri senza default: `0 <= scale_bits < modulus_bits <= 62`.
-Quantizzazione: arrotondamento al più vicino con pareggi al pari, passo
-`2**(-scale_bits)`, errore individuale al massimo mezzo passo. Ogni aggiornamento
-deve rientrare nell'intervallo con segno; anche la somma deve rientrarvi per
-interpretare correttamente la dequantizzazione. Il simulatore controlla la somma intera quantizzata con interi Python: se esce da
-[-2^(modulus_bits−1), 2^(modulus_bits−1)−1] solleva `AggregateOverflowError`.
-È possibile soltanto perché conosce gli input: un reducer reale non può farlo.
-In produzione serve un `clip_bound` verificato per sito, non la fiducia nel reducer.
-Il parametro obbligatorio keyword-only, senza default e mai None, non applica clipping: rifiuta coordinate con |x| oltre il
-limite. Il costruttore verifica finitezza, non negatività e sicurezza per almeno
-2 siti; `setup` verifica n × clip_bound × 2^scale_bits < 2^(modulus_bits−1),
-quando n è noto, prima di generare chiavi. Si verifica anche il limite conservativo
-n × round-to-even(clip_bound × 2^scale_bits), includendo l’arrotondamento.
-Il controllo esatto resta una difesa aggiuntiva, non un’alternativa al limite. Un round iniziato
-consuma l’indice anche in caso di errore: non riutilizzarlo.
+`stats()` restituisce una copia isolata di `RoundStats`: bytes_sent e
+bytes_received per tutti gli attori, più transfers (lista di Transfer con sender,
+receiver e size). Sono totali dell’ultima operazione setup, round o rekey; in A
+setup_stats e rekey_stats conservano copie dedicate. Il registro contiene solo
+metadati e **non è scritto nel JSONL**, né contiene payload o segreti.
 
-Ogni coppia ordinata lessicograficamente esegue una KEM in setup e a ogni rekey.
-Si generano solo n−1 coppie di chiavi, poiché l’ID minimo non è mai destinatario. HKDF-SHA256
-usa come info la codifica JSON ASCII compatta della lista
-`["pqfl/scheme-a/mask/v2", epoch, round_idx, left, right]`, salt assente, output 32 byte.
-ChaCha20 di cryptography espande con nonce di 16 byte nullo: la chiave derivata
-cambia per epoca/coppia/round. `pairwise_mask` richiede `epoch` esplicito. Ogni elemento usa 8 byte little-endian troncati ai bit
-modulari; l'ID minore aggiunge, il maggiore sottrae. Nessun round si può riusare.
-La KEM a rifiuto implicito non si verifica confrontando direttamente i segreti.
-Per ogni coppia si deriva una chiave di conferma HKDF-SHA256 (32 byte, salt assente)
-con info JSON ASCII compatto
+Ogni messaggio passa da `ByteCounter.send(sender, receiver, serialized_bytes)`:
+la consegna simulata usa gli stessi byte, chiama counter.transfer con len e
+registra il trasferimento. Contatori e registro devono riconciliarsi esattamente.
+Inclusa diffusione del risultato; esclusi framing di trasporto e TLS. Si contano
+payload concreti, non stime o byte di rete fisica. Un adapter di rete futuro deve
+preservare questa frontiera e registrare messaggi aggiuntivi.
+
+`communication_edges` dichiara collegamenti diretti per setup, round e rekey.
+A scambia fra coppie di siti in setup/rekey e usa una stella sito↔reducer nei
+round. Gli stub B/C usano solo la stella nei round. I test richiedono byte positivi
+per **ogni collegamento dichiarato**, assenza di trasferimenti su collegamenti
+non dichiarati e corrispondenza tra len consegnati, registro, stats e log.
+Non si impone un full mesh a protocolli a stella: richiederlo aggiungerebbe
+messaggi artificiali e altererebbe il confronto. Questa precisazione sostituisce
+il requisito letterale di positività per ogni possibile coppia di attori.
+
+## Schema A: quantizzazione e maschere v2
+
+`SchemeA(kem, *, scale_bits, modulus_bits, clip_bound, writer=None,
+authenticator=None, key_provider=None)` richiede tre parametri numerici espliciti.
+`0 <= scale_bits < modulus_bits <= 62`; clip_bound finito, non negativo e mai
+None. Nessun valore numerico predefinito. Passo 2^(-scale_bits), arrotondamento al
+più vicino con pareggi al pari; errore individuale massimo di mezzo passo.
+Il limite non applica clipping: coordinate oltre clip_bound sono rifiutate.
+
+Il costruttore non riceve n e controlla la sicurezza per almeno 2 siti;
+setup, appena noto n e prima delle chiavi, richiede
+n × clip_bound × 2^scale_bits < 2^(modulus_bits−1), e verifica anche il limite
+conservativo n × round-to-even(clip_bound × 2^scale_bits), includendo l’arrotondamento.
+Il simulatore controlla inoltre la somma intera quantizzata con interi Python:
+fuori da [-2^(modulus_bits−1), 2^(modulus_bits−1)−1] solleva
+`AggregateOverflowError`. È possibile solo perché conosce gli input; un reducer
+reale richiede il limite verificato localmente. I test di questa difesa aggiuntiva
+iniettano deliberatamente una configurazione corrotta, non consentita dal
+costruttore normale. Non è un modo per disabilitare il limite in produzione.
+
+Si generano n−1 coppie di chiavi: l’ID minimo non è mai destinatario di encaps.
+Ogni coppia ordinata lessicograficamente esegue una KEM. Ciascun lato ricava
+la propria maschera: HKDF-SHA256, salt assente, output 32 byte, info JSON ASCII
+compatto `["pqfl/scheme-a/mask/v2", epoch, round_idx, left, right]`.
+`pairwise_mask` richiede epoch esplicita. ChaCha20 di cryptography espande con
+nonce nullo di 16 byte e chiave distinta per epoca/coppia/round. Ogni elemento
+usa 8 byte little-endian troncati ai bit modulari. ID minore somma, maggiore
+sottrae. Mai riusare un round nella sessione.
+
+Conferma separata HKDF-SHA256 a 32 byte, salt assente, info JSON ASCII compatto
 `["pqfl/scheme-a/confirm/v1", epoch, left, right, hex(SHA-256(public || ciphertext))]`.
-Ogni lato usa il proprio segreto, produce HMAC-SHA256 sul ruolo ASCII `left` o
-`right` e verifica il tag dell’altro con `hmac.compare_digest`. Due messaggi
-aggiuntivi da 32 byte per coppia, conteggiati con len, anche dopo rekey.
-Errore: `KeyConfirmationError`, senza materiale segreto nel messaggio.
-La conferma non autentica le identità o la provenienza della chiave pubblica.
-`recover_masks(...)` è uno stub per secret sharing dei seed; dropout rifiutato.
-Il backend liboqs reale e `pqfl.kem.HybridKEM` implementano ora KEM;
-il trasporto autenticato `HybridChannel` e il backend OpenSSL restano stub.
+Ogni lato usa il proprio segreto KEM per HMAC-SHA256 del ruolo ASCII left/right
+e verifica il tag dell’altro tramite hmac.compare_digest. Due tag da 32 byte
+per coppia, contati con len, senza confronto diretto dei segreti.
+`KeyConfirmationError` invalida la disponibilità dell’epoca: un nuovo rekey
+riuscito è necessario prima di riprendere. Nessun segreto nei messaggi d’errore.
 
-Esempio di contratto da completare con configurazione e backend verificati sul cluster:
+`serialize_masked` codifica interi modulari canonici in ceil(modulus_bits/8) byte
+little-endian, ordine C, senza intestazione; forma e bit sono noti fuori banda.
+`deserialize_masked` rifiuta lunghezze inattese e bit alti non canonici.
+Ogni sito quantizza, calcola le proprie n−1 maschere, applica e serializza;
+il reducer deserializza, somma modulo 2^modulus_bits, serializza e invia a tutti;
+ogni sito deserializza e dequantizza. `_masked_site` è un metodo interno di test,
+non un endpoint per aggirare l’univocità dei round. `recover_masks` resta uno stub.
 
-```python
-import numpy as np
-from pqfl.aggregators.scheme_a import SchemeA
-from pqfl.logging.metrics import JSONLWriter
+## Autenticazione
 
-from pqfl.kem import HybridKEM
-# kem = HybridKEM()  # Requires reviewed native liboqs and Python binding.
-# scale_bits, modulus_bits = reviewed_configuration  # TODO
-writer = JSONLWriter.from_config("run.jsonl", "configs/experiment.yaml")
-# Set run_seed and other public metadata in the YAML before running.
-# auth = configured_authenticator  # TODO: externally provisioned trust
-# clip_bound = reviewed_clip_bound  # TODO
-# agg = SchemeA(kem, scale_bits=scale_bits, modulus_bits=modulus_bits,
-#               clip_bound=clip_bound, authenticator=auth, writer=writer)
-# agg.setup(["A", "B", "C"])
-# result = agg.aggregate_round(0, {s: np.zeros(4) for s in ["A", "B", "C"]})
-```
-
-Per un esempio eseguibile usare `tests/test_scheme_a.py`, con FakeKEM INSECURE
-confinata ai test. Il seed di riproducibilità usa solo il generatore fittizio;
-nessun parametro seed deterministico è previsto per KEM reali.
-
-## Log e misure
-
-Un file nuovo per esecuzione; `JSONLWriter` rifiuta un file esistente.
-Usare `Metrics([*site_ids, "reducer"], writer, epoch=0)` e
-`with metrics.phase_timer("crypto", site="A"):`;
-le altre fasi sono `auth`, `compute` e `comm`. Assegnare `metrics.round_idx` e usare
-`metrics.counter.transfer(sender, receiver, nbytes)` per messaggi tra siti.
-Ogni riga riporta il DELTA dei byte dall’ultima riga scritta dalla stessa
-istanza Metrics (inizialmente zero per ogni attore). Le righe sono sommabili
-per ottenere stats() dell’operazione; i contatori si azzerano con la nuova
-Metrics di ciascun round. Setup ha round `null`, epoca 0. `site` attribuisce
-il blocco di lavoro a un attore; i delta includono tutti gli attori interessati,
-non solo il valore di site. Timer non annidati. Ogni sito quantizza, calcola
-le proprie n−1 maschere, applica e serializza; entrambi i lati di ogni coppia
-ricalcolano la maschera. Il reducer deserializza, somma e serializza il risultato;
-ogni sito lo deserializza e dequantizza. Nessuna riga `comm` nel simulatore:
-non c’è trasporto reale. La fase resta valida per implementazioni future.
-I tempi sono lavoro locale per attore, non latenza distribuita.
-
-Campi (schema_version = 2): schema_version, run_id, config_hash, scheme, dp_level,
-run_seed, round, phase, site, epoch, duration_s,
-bytes_sent, bytes_received, peak_mem_gpu_mb, peak_mem_host_mb, timestamp,
-library_versions. `run_seed` è il seed pubblico dell’esperimento letto dalla
-configurazione YAML; il vecchio campo `seed` è rimosso. Il template lascia
-`run_seed: TODO`: prima di creare un log va scelto un intero non negativo.
-Questo valore non inizializza mai la casualità crittografica. Non registrare
-seed crittografici, chiavi, segreti condivisi, ciphertext, maschere o tag di conferma. Memoria non misurata: `null`, mai zero inventato. Librerie
-riportate nelle versioni realmente installate. L’hash SHA256 è calcolato sul JSON della configurazione pubblica, chiavi ordinate
-e separatori compatti. Collector memoria e inventario completo backend: TODO. Il chiamante
-non deve inserire segreti neppure nei metadati testuali o nel file configurazione.
-
-La frontiera include solo payload dei messaggi di protocollo: chiavi pubbliche,
-ciphertext, tag di conferma, vettori mascherati e risultato aggregato, con diffusione a tutti i
-siti inclusa. Tutti i conteggi usano `len()` dei messaggi realmente serializzati,
-mai una formula stimata. Esclusi framing di trasporto, TLS e autenticazione del canale (i tag di conferma
-del protocollo A sono invece inclusi).
-`serialize_masked` codifica ogni intero modulare canonico in
-`ceil(modulus_bits/8)` byte little-endian, ordine C, senza intestazione.
-Forma e bit sono concordati fuori banda; `deserialize_masked` rifiuta lunghezze
-inattese e bit alti non canonici. `reducer` è un attore riservato, separato da
-site_ids: riceve ciascun upload e invia a ogni sito lo stesso risultato
-serializzato. `stats()` include invii e ricezioni di tutti gli attori. Si contano
-payload concreti, ma non pacchetti di una rete reale; per B/C vale la stessa
-frontiera, non un confronto diretto con byte di trasporto.
-
-## Consegna B e C
-
-Consegnare implementazione dell'ABC, configurazioni senza default arbitrari,
-serializzazione documentata, adattamento Tensor, test di somma/errore e
-strumentazione comune per setup, compute, crypto e comm. Separare messaggi di
-protocollo, broadcast e canale, contare invio/ricezione per sito senza doppio
-conteggio e documentare l'eventuale coordinatore. CKKS deve dichiarare parametri,
-precisione e tolleranza testata; MPC deve dichiarare dominio e conversione.
-Dichiarare librerie/versioni realmente validate, numero/soglia di partecipanti,
-assunzioni su collusione e dropout. Non consegnare benchmark o dati clinici.
-Qualsiasi confronto di prestazioni richiede prima la stessa frontiera di misura.
-
-## Backend e composizione ibrida
-
-`LibOQSKEM` usa context manager del binding liboqs-python per generazione,
-esportazione della chiave privata, encaps e decaps. Nessuna installazione
-automatica; dipendenze assenti sollevano `BackendUnavailable` con istruzioni.
-Preferisce ML-KEM-768. Kyber768 richiede `allow_legacy=True`, produce warning e
-mantiene il nome legacy; non è una variante intercambiabile dello standard.
-Le versioni reali e il nome del meccanismo sono disponibili in `library_versions`.
-
-`HybridKEM(pq_kem=None)` usa ML-KEM-768 reale per default. L'iniezione esplicita
-consente test con FakeKEM confinata ai test. La chiave pubblica contiene nome
-algoritmo, chiave X25519 destinatario (32 byte) e chiave PQ; la chiave privata
-contiene chiave X25519 privata, chiave PQ privata e chiave pubblica completa.
-Il ciphertext contiene chiave X25519 effimera mittente e ciphertext PQ.
-
-Codifica v1: prefisso ASCII `pqfl/hybrid-kem/v1/`, tag `pk`, `sk`, `ct` o
-`combiner`, poi campi con lunghezza uint32 big-endian e byte esatti, nel precedente
-ordine. Rifiutati tag/versioni errati, troncamenti, byte finali e nomi incompatibili.
-Il segreto finale è HKDF-SHA256 a 32 byte, salt assente, input
-`shared_X25519 || shared_PQ`. L'info è la codifica `combiner` con due campi:
-chiave pubblica ibrida completa e ciphertext ibrido completo. Include così nome,
-entrambe le chiavi pubbliche e le componenti ciphertext; in X25519 il ciphertext
-KEM è la chiave effimera. Chiavi effimere da cryptography, nessun run_seed usato.
-Non è fornita cancellazione garantita dei byte segreti nella memoria Python.
-
-La costruzione non è stata rivista formalmente: TODO revisione da parte di un
-esperto. Non fornisce autenticazione, protezione replay o trasporto. La scelta
-TLS 1.3 ibrido via OpenSSL/canale applicativo resta aperta.
-
-Nel JSONL `library_versions` può includere versioni native e meccanismo reali.
-Per la strumentazione usare `HandshakeSummary`, non payload liberi.
-L'harness registra un campo opzionale `summary` con operazione, meccanismo,
-ripetizioni, warm-up, percentili in secondi (interpolazione lineare), frontiera
-temporale e frontiera dei byte. `duration_s` è la mediana dei campioni; ogni riga
-è un riepilogo e non una singola osservazione o un round di aggregazione.
-
-## Controlli funzionali e regressione
-
-`_masked_site(site, round_idx, quantized)` è un metodo interno del simulatore:
-restituisce una copia mascherata del vettore già quantizzato, calcolando soltanto
-le maschere di quel sito. È esposto per verificare la mascheratura, non è un
-endpoint e non deve essere usato per aggirare l’univocità dei round pubblici.
-I test su 100000 elementi e sui bit sono controlli sintetici, non benchmark.
-Il vettore dorato è stato ottenuto eseguendo questa implementazione con seed
-INSECURE di test; serve a rilevare cambiamenti, non certifica HKDF o ChaCha20.
-
-Le nuove eccezioni sono in `pqfl.aggregators.errors` (anche importabili da
-scheme_a). Un `KeyConfirmationError` invalida la disponibilità dell’epoca;
-un `AggregateOverflowError` non restituisce alcun risultato e consuma il round.
-Nessun valore segreto viene inserito nei messaggi di errore o nei log.
-Il controllo esatto della somma aggiunge lavoro di sicurezza al simulatore:
-non è un costo implementabile dal reducer senza accesso ai singoli aggiornamenti.
-
-## Metadati runtime e dimensioni ibride
-
-Schema_version rimane 2. `env` è una chiave opzionale sul primo record di setup
-(epoch=0, round=null), prodotta dallo stesso collector di `scripts/check_env.py`:
-versioni Python, cryptography, binding e liboqs, CPU e liste KEM/SIG abilitate.
-Libreria nativa assente: versione null, liste vuote e oqs_available=false.
-Non si registrano valori di variabili d’ambiente o segreti.
-
-Per il pack ibrido v1 con nome esatto ML-KEM-768: pk totale **1259 byte**,
-ct totale **1149 byte**. Questi numeri sono stati verificati sul serializer con
-componenti delle dimensioni standard (pk PQ 1184, ct PQ 1088, X25519 32), non
-con un backend nativo funzionante. I test reali controllano le stesse dimensioni
-oltre al segreto di 32 byte e al round trip. Non sono misure di prestazioni.
-
-## Autenticazione e partecipazione (E)
-
-`Authenticator.issue(owner, epoch, public_key)` produce `AuthProof`;
+`Authenticator.issue(owner, epoch, public_key)` produce AuthProof;
 `verify(verifier, owner, epoch, public_key, proof)` accetta oppure solleva
-`AuthenticationError`. Ogni verificatore possiede il proprio registro fuori
-banda. Default `PinnedFingerprintAuth()` vuoto: fallisce senza pin, non effettua
-trust-on-first-use e non deriva alcun seed dopo una chiave non autentica.
-`PinnedFingerprintAuth.from_config` legge la mappa pubblica
-verifier → epoch → owner → fingerprint SHA256 esadecimale. Per pinnare chiavi
-KEM effimere prima dello scambio, il chiamante passa `key_provider(owner, epoch)`
-con coppie pre-provisionate e pin verificati fuori banda. Il provider deve
-fornire nuove chiavi per il rekey; non usare lo stesso collegamento non
-attendibile per procurarsi sia chiave sia fingerprint.
+`AuthenticationError`, **prima di encaps e della derivazione del seed**.
+Ogni verificatore possiede il proprio registro fuori banda.
 
-`MLDSAAuth` usa solo ML-DSA-65 abilitata nel backend reale, nessun fallback.
-Le identità a lungo termine e i relativi registri di chiavi pubbliche pinnate
-sono iniettati dal chiamante; le chiavi segrete non appartengono al YAML.
-Il messaggio firmato è JSON ASCII compatto della lista
-`["pqfl/auth/v1", epoch, site_id, public_key.hex()]`.
-Cambiare epoca, proprietario o chiave invalida la firma. Le dimensioni di firma
-e identità sono lette da oqs; il test richiede firma di 3309 byte ma la misura
-reale resta non verificata su questa macchina senza liboqs nativa.
+Default PinnedFingerprintAuth vuoto: fallisce senza pin, senza trust-on-first-use.
+from_config legge verifier → epoch → owner → fingerprint SHA256 esadecimale.
+Per pinnare chiavi KEM effimere prima dello scambio il chiamante usa
+key_provider(owner, epoch), con nuove coppie pre-provisionate e pin autentici.
+Non procurarsi chiave e fingerprint dallo stesso collegamento non attendibile.
+La generazione offline delle coppie del provider è un costo distinto dalla
+lettura del provider misurata in setup e va dichiarata in un confronto reale.
 
-La fase aggiuntiva `auth` rende visibili firma e verifica separate da KEM/HMAC.
+MLDSAAuth usa solo ML-DSA-65 abilitata nel backend reale. Identità a lungo termine,
+chiavi segrete da storage sicuro e registri di chiavi identità pubbliche pinnate
+sono iniettati dal chiamante; niente segreti nel YAML. Messaggio firmato:
+JSON ASCII compatto `["pqfl/auth/v1", epoch, site_id, public_key.hex()]`.
+La prova non è valida per un’altra epoca, identità o chiave. Dimensioni da oqs;
+il test richiede firma di 3309 byte, ma la misura nativa resta da verificare qui.
+
 Si firma una volta per proprietario/epoca, poi si inviano chiave KEM, chiave
-identità e firma a ciascun destinatario interessato; si contano i len effettivi
-con lo stesso counter.transfer, senza ricontare la chiave KEM nella fase crypto.
-Il pinning non introduce firme o chiavi di identità sul wire. Nessuna firma o
-chiave viene salvata nei log. Schema_version resta **2**: estensione documentata
-dell’insieme phase, non cambio di struttura dei campi obbligatori.
+identità e firma a ogni destinatario interessato; si contano i len effettivi
+tramite lo stesso counter.transfer (invocato da send). Non ricontare la chiave
+KEM nella fase crypto. Nel pinning non ci sono firma e chiave identità sul wire.
+Questa autenticazione non sostituisce l’integrità del canale e dei vettori.
 
-`participation_policy="all_or_abort"`: sito mancante o inatteso solleva
-`MissingParticipantError`, sottoclasse di ValueError, prima di produrre output
-parziale o consumare il round. Nessun recovery è implementato. Anche B e C devono
-esporre `participation_policy` con lo stesso nome e dichiararne il comportamento.
+## Log e frontiera temporale
+
+Schema_version resta **2**. Campi obbligatori: schema_version, run_id, config_hash,
+scheme, dp_level, run_seed, round, phase, site, epoch, duration_s, bytes_sent,
+bytes_received, peak_mem_gpu_mb, peak_mem_host_mb, timestamp, library_versions.
+Un file nuovo per run; file esistente rifiutato. run_seed è pubblico, dal YAML,
+intero non negativo; non inizializza mai un KEM reale. config_hash è SHA256 del
+JSON pubblico con chiavi ordinate e separatori compatti. Memoria non misurata null.
+
+Fasi ammesse: **auth, crypto, compute, comm**. Timer non annidati per attore:
+`with metrics.phase_timer("auth", site="A"):`. Auth include firma/verifica;
+crypto include KEM, conferma e maschere; compute quantizzazione, serializzazione
+e reducer. Comm richiede trasporto reale: nessuna riga comm nei simulatori.
+Il controllo di overflow aggiunge lavoro al simulatore, non è un costo di un
+reducer privato senza accesso agli input.
+
+Ogni riga Metrics riporta il DELTA dei byte dall’ultima riga della stessa istanza,
+non dall’ultima riga dello stesso sito. Si possono sommare le righe di
+un’operazione per ricostruire stats; nuova Metrics per ogni operazione. Site
+attribuisce il lavoro, mentre i delta includono tutti gli attori coinvolti.
+Setup epoch=0 e round=null; rekey round=null e nuova epoca per A. Gli stub con
+rekey no-op mantengono epoch. Il registro transfers non cambia lo schema JSONL.
+
+Env è opzionale solo nel primo record setup: versioni Python/cryptography,
+binding/liboqs, CPU e KEM/SIG abilitati, dal collector scripts/check_env.py.
+Native assente: liboqs=null, liste vuote, oqs_available=false. Nessuna variabile
+segreta o credenziale letta. L’harness può usare HandshakeSummary (riepiloghi
+locali, duration_s mediana, percentili lineari): non sono round di aggregazione
+e non si sommano le righe componenti e handshake.
+
+Non registrare seed crittografici, chiavi, segreti condivisi, ciphertext, maschere,
+tag o firme, nemmeno in metadati o configurazioni. Il registro conserva solo
+attori e dimensioni. Pin pubblici e trust configuration rimangono fuori dai log.
+
+## Backend reale e composizione ibrida
+
+KEM conserva keygen() → (public, secret), encaps(public) → (ciphertext, shared),
+decaps(secret, ciphertext) → shared. LibOQSKEM rileva ML-KEM-768; Kyber768 è
+legacy diverso e richiede allow_legacy=True esplicito. BackendUnavailable con
+istruzioni se manca una capacità; nessuna installazione automatica o FakeKEM
+nel pacchetto. Le versioni effettive sono in library_versions.
+
+HybridKEM di default usa ML-KEM-768 reale; l’iniezione FakeKEM esiste solo nei test.
+Pack v1: prefisso ASCII pqfl/hybrid-kem/v1/, tag pk/sk/ct/combiner, poi campi
+con lunghezza uint32 big-endian. Pk: nome algoritmo, X25519 destinatario, pk PQ;
+sk: privato X25519, sk PQ, pk ibrida completa; ct: pubblico X25519 effimero e ct PQ.
+HKDF-SHA256 a 32 byte su shared_X25519 concatenato a shared_PQ, salt assente,
+info pack combiner contenente pk e ct ibridi completi. Include entrambe le chiavi
+pubbliche e componenti ciphertext. Non è un canale autenticato né un profilo TLS
+standard; TODO revisione da parte di un esperto. Nessuna cancellazione garantita
+delle copie di segreti in memoria Python.
+
+Per nome esatto ML-KEM-768: pk PQ 1184 byte, ct PQ 1088, ss 32; X25519 pubblico 32.
+Pack(pk) **1259 byte**, pack(ct) **1149 byte**, verificati sul serializer con
+componenti delle dimensioni standard, non su un backend nativo funzionante qui.
+I test reali verificano dimensioni e round trip, KAT ufficiali e interop OpenSSL.
+make test-real fallisce per qualsiasi skip requires_oqs. Native 0.16.0 non
+compilata per CMake mancante; dettagli e provenienza KAT in decisions.md.
+
+## Consegna B e C e conformità
+
+AGGREGATOR_REGISTRY contiene A, B e C. B e C oggi sono **INSECURE_STUB**:
+somma in chiaro con float64 little-endian, payload realmente serializzati e
+consegnati nella stella, risultato diffuso a tutti. Nessuna HE, MPC, cifratura
+o autenticazione. Questi byte descrivono solo gli stub, mai costi CKKS/MPC.
+Il chiamante deve etichettare gli esperimenti come stub, non risultati B/C reali.
+
+Sostituire il core mantenendo ABC e suite tests/test_aggregator_contract.py.
+Dichiarare numerica/tolleranze, actors, partecipazione, rekey e collegamenti;
+registrare ogni messaggio e misurare le stesse fasi. CKKS dovrà dichiarare
+parametri e precisione; MPC dominio e conversioni. Le policy degli stub non
+pre-approvano le scelte dei colleghi. Nessun benchmark, training o dato clinico
+incluso. I test sintetici e il vettore dorato prodotto dalla funzione corrente
+sono regressioni, non prove crittografiche indipendenti.
+
+## Punti aperti per i colleghi
+
+1. **Collusione reducer più un sito**: cosa dichiara ciascuno schema reale?
+   In A la conoscenza del seed di una coppia consente di togliere quella maschera;
+   non basta a recuperare l’update se resta una maschera ignota con il terzo sito.
+   Per isolare un singolo update servono tutti i suoi contributi di maschera
+   rilevanti (o ulteriori informazioni). Con tre siti e nessuna informazione
+   ausiliaria, reducer più un sito apprendono la somma degli altri due. La
+   formula “basta il seed della coppia col colluso” è quindi solo necessaria,
+   non sufficiente nel caso a tre siti. B e C: dichiarazioni da concordare con
+   i responsabili, non dedotte dagli stub.
+2. **H6**: riportare il costo handshake come mediana dei componenti o misura
+   end-to-end? Decisione aperta con i colleghi. La somma delle mediane non è
+   in generale la mediana del totale; l’harness può osservare entrambe le
+   quantità ma non decide quale riportare nel paper. Nessun dato prodotto qui.

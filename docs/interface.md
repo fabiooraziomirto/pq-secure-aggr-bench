@@ -25,7 +25,7 @@ rimangono nel processo locale fino alla protezione prevista dal protocollo.
 `setup` è chiamato una volta per istanza/sessione. I round sono interi non
 negativi univoci nella sessione. Riavviare una sessione reale richiederà nuove
 chiavi e un identificatore di sessione concordato; la gestione persistente è TODO.
-`stats()` restituisce una copia dei contatori per sito dell'ultima operazione:
+`stats()` restituisce una copia dei contatori per attore (siti e `reducer`) dell'ultima operazione:
 dopo setup sono costi setup, dopo un round solo i costi di quel round.
 Lo schema A conserva anche `setup_stats`; non è un'estensione obbligatoria API.
 
@@ -73,31 +73,46 @@ nessun parametro seed deterministico è previsto per KEM reali.
 ## Log e misure
 
 Un file nuovo per esecuzione; `JSONLWriter` rifiuta un file esistente.
-Usare `Metrics(site_ids, writer)` e `with metrics.phase_timer("crypto"):`;
+Usare `Metrics([*site_ids, "reducer"], writer, epoch=0)` e
+`with metrics.phase_timer("crypto", site="A"):`;
 le altre fasi sono `compute` e `comm`. Assegnare `metrics.round_idx` e usare
 `metrics.counter.transfer(sender, receiver, nbytes)` per messaggi tra siti.
-I contatori nel JSONL sono snapshot cumulativi dell'operazione, non delta da
-sommare tra righe. Setup ha round `null`. Nessuna sovrapposizione intenzionale
-tra fasi; i tempi misurano il blocco locale, non prestazioni distribuite.
+Ogni riga riporta il DELTA dei byte dall’ultima riga scritta dalla stessa
+istanza Metrics (inizialmente zero per ogni attore). Le righe sono sommabili
+per ottenere stats() dell’operazione; i contatori si azzerano con la nuova
+Metrics di ciascun round. Setup ha round `null`, epoca 0. `site` attribuisce
+il blocco di lavoro a un attore; i delta includono tutti gli attori interessati,
+non solo il valore di site. Timer non annidati. Ogni sito quantizza, calcola
+le proprie n−1 maschere, applica e serializza; entrambi i lati di ogni coppia
+ricalcolano la maschera. Il reducer deserializza, somma e serializza il risultato;
+ogni sito lo deserializza e dequantizza. Nessuna riga `comm` nel simulatore:
+non c’è trasporto reale. La fase resta valida per implementazioni future.
+I tempi sono lavoro locale per attore, non latenza distribuita.
 
-Campi (schema_version = 1): schema_version, run_id, config_hash, scheme, dp_level,
-run_seed, round, phase, duration_s,
+Campi (schema_version = 2): schema_version, run_id, config_hash, scheme, dp_level,
+run_seed, round, phase, site, epoch, duration_s,
 bytes_sent, bytes_received, peak_mem_gpu_mb, peak_mem_host_mb, timestamp,
 library_versions. `run_seed` è il seed pubblico dell’esperimento letto dalla
 configurazione YAML; il vecchio campo `seed` è rimosso. Il template lascia
 `run_seed: TODO`: prima di creare un log va scelto un intero non negativo.
 Questo valore non inizializza mai la casualità crittografica. Non registrare
-seed crittografici, chiavi, segreti condivisi, ciphertext o maschere. Memoria non misurata: `null`, mai zero inventato. Librerie
+seed crittografici, chiavi, segreti condivisi, ciphertext, maschere o tag di conferma. Memoria non misurata: `null`, mai zero inventato. Librerie
 riportate nelle versioni realmente installate. L’hash SHA256 è calcolato sul JSON della configurazione pubblica, chiavi ordinate
 e separatori compatti. Collector memoria e inventario completo backend: TODO. Il chiamante
 non deve inserire segreti neppure nei metadati testuali o nel file configurazione.
 
-Contare payload pubblici KEM e ciphertext in setup per coppia, e payload logici
-modulari al reducer esterno nei round di A: `numero_elementi * ceil(modulus_bits/8)`.
-Il reducer non è un sito; ricezione dei siti pari a zero se non c'è broadcast.
-Sono conteggi simulati: non byte effettivamente serializzati o inviati su rete.
-Framing, autenticazione e canale vanno aggiunti e misurati separatamente quando
-esisterà il trasporto. Non confrontare questi conteggi con traffico wire di B/C.
+La frontiera include solo payload dei messaggi di protocollo: chiavi pubbliche,
+ciphertext, vettori mascherati e risultato aggregato, con diffusione a tutti i
+siti inclusa. Tutti i conteggi usano `len()` dei messaggi realmente serializzati,
+mai una formula stimata. Esclusi framing di trasporto, TLS e autenticazione.
+`serialize_masked` codifica ogni intero modulare canonico in
+`ceil(modulus_bits/8)` byte little-endian, ordine C, senza intestazione.
+Forma e bit sono concordati fuori banda; `deserialize_masked` rifiuta lunghezze
+inattese e bit alti non canonici. `reducer` è un attore riservato, separato da
+site_ids: riceve ciascun upload e invia a ogni sito lo stesso risultato
+serializzato. `stats()` include invii e ricezioni di tutti gli attori. Si contano
+payload concreti, ma non pacchetti di una rete reale; per B/C vale la stessa
+frontiera, non un confronto diretto con byte di trasporto.
 
 ## Consegna B e C
 

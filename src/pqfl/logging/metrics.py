@@ -57,7 +57,7 @@ class JSONLWriter:
         self.library_versions = dict(library_versions or {})
         self.path = path
         self.metadata = dict(run_id=run_id, config_hash=config_hash,
-                             scheme=scheme, dp_level=dp_level, run_seed=run_seed, schema_version=1)
+                             scheme=scheme, dp_level=dp_level, run_seed=run_seed, schema_version=2)
         # One writer owns one new run file; never append to another execution.
         with open(path, "x", encoding="utf-8"):
             pass
@@ -78,10 +78,14 @@ class JSONLWriter:
                    scheme=config["scheme"], dp_level=config["dp_level"],
                    run_seed=config["run_seed"], library_versions=library_versions)
 
-    def record(self, *, round_idx, phase, duration_s, stats, summary=None):
+    def record(self, *, round_idx, phase, duration_s, stats, site=None, epoch=0, summary=None):
         if phase not in {"compute", "crypto", "comm"}:
             raise ValueError("Unknown phase")
-        row = dict(self.metadata, round=round_idx, phase=phase,
+        if site is not None and not isinstance(site, str):
+            raise ValueError("site must be a string or None")
+        if type(epoch) is not int or epoch < 0:
+            raise ValueError("epoch must be a nonnegative integer")
+        row = dict(self.metadata, round=round_idx, phase=phase, site=site, epoch=epoch,
                    duration_s=duration_s, bytes_sent=stats.bytes_sent,
                    bytes_received=stats.bytes_received, peak_mem_gpu_mb=None,
                    peak_mem_host_mb=None, timestamp=datetime.now(timezone.utc).isoformat(),
@@ -96,13 +100,15 @@ class JSONLWriter:
 
 
 class Metrics:
-    def __init__(self, site_ids, writer=None):
+    def __init__(self, site_ids, writer=None, *, epoch=0):
+        self.epoch = epoch
         self.counter = ByteCounter(site_ids)
         self.writer = writer
         self.round_idx = None
+        self._last_written = RoundStats(dict.fromkeys(site_ids, 0), dict.fromkeys(site_ids, 0))
 
     @contextmanager
-    def phase_timer(self, phase):
+    def phase_timer(self, phase, *, site=None):
         if phase not in {"compute", "crypto", "comm"}:
             raise ValueError("Unknown phase")
         start = time.perf_counter()
@@ -110,6 +116,13 @@ class Metrics:
             yield
         finally:
             if self.writer is not None:
+                current = self.counter.value
+                delta = RoundStats(
+                    {actor: size - self._last_written.bytes_sent[actor]
+                     for actor, size in current.bytes_sent.items()},
+                    {actor: size - self._last_written.bytes_received[actor]
+                     for actor, size in current.bytes_received.items()})
                 self.writer.record(round_idx=self.round_idx, phase=phase,
                                    duration_s=time.perf_counter() - start,
-                                   stats=self.counter.value)
+                                   stats=delta, site=site, epoch=self.epoch)
+                self._last_written = RoundStats(dict(current.bytes_sent), dict(current.bytes_received))

@@ -40,7 +40,7 @@ liboqs e tc; non certifica sicurezza, interoperabilità o permessi di rete.
 Non salvare dati clinici, chiavi, segreti o credenziali. Usare identificatori
 neutri e non aggiungere autori, affiliazioni o ringraziamenti per double-blind.
 
-I log JSONL usano `schema_version: 1` e `run_seed` pubblico dalla configurazione
+I log JSONL usano `schema_version: 2` e `run_seed` pubblico dalla configurazione
 YAML (intero non negativo da scegliere al posto di TODO). Non viene usato per
 inizializzare KEM reali; nessun materiale crittografico deve essere registrato.
 

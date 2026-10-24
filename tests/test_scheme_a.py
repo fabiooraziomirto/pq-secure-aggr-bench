@@ -27,7 +27,8 @@ def make(factory, order=SITES, seed=42, writer=None):
 def test_masked_sum_matches_plaintext(fake_kem_factory):
     agg = make(fake_kem_factory)
     np.testing.assert_array_equal(agg.aggregate_round(0, UPDATES), sum(UPDATES.values()))
-    assert agg.stats().bytes_sent == dict.fromkeys(SITES, 8)
+    assert agg.stats().bytes_sent == dict(A=8, B=8, C=8, reducer=24)
+    assert agg.stats().bytes_received == dict(A=8, B=8, C=8, reducer=24)
     assert agg.setup_stats.bytes_sent["A"] > 0
 
 
@@ -83,14 +84,17 @@ def test_logs_contain_no_secrets(tmp_path, fake_kem_factory, monkeypatch):
     agg.aggregate_round(0, UPDATES)
     text = path.read_text()
     rows = [json.loads(line) for line in text.splitlines()]
-    assert len(rows) == 5
-    required = {"run_id", "config_hash", "scheme", "dp_level", "run_seed", "schema_version", "round", "phase",
+    assert len(rows) == 21
+    required = {"run_id", "config_hash", "scheme", "dp_level", "run_seed", "schema_version", "round", "phase", "site", "epoch",
                 "duration_s", "bytes_sent", "bytes_received", "peak_mem_gpu_mb",
                 "peak_mem_host_mb", "timestamp", "library_versions"}
     for row in rows:
         assert set(row) == required
         assert row["run_seed"] == config["run_seed"]
-        assert row["schema_version"] == 1
+        assert row["schema_version"] == 2
+        assert row["site"] in [*SITES, "reducer"]
+        assert row["epoch"] == 0
+        assert row["phase"] != "comm"
         assert "seed" not in row
         assert row["duration_s"] >= 0
     # Scan every generated key/shared secret/ciphertext and each derived mask.

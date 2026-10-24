@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pqfl"
+version = "0.0.0"
+description = "Research scaffolding for post-quantum secure aggregation"
+requires-python = ">=3.10"
+dependencies = ["numpy", "cryptography", "PyYAML"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

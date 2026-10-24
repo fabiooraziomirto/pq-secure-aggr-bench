@@ -1,0 +1,17 @@
+# Template non eseguibile: completare e validare prima di ogni esperimento.
+run_id: TODO
+scheme: A
+sites: [A, B, C]
+model: TODO
+adapter: TODO
+scale_bits: TODO
+modulus_bits: TODO
+kem_library: TODO
+kem_algorithm: ML-KEM-768
+channel: X25519+ML-KEM-768
+he_library: TODO
+dp_level: TODO
+# Il seed di riproducibilità NON deve mai diventare un seed crittografico.
+run_seed: TODO
+network_emulation: TODO
+container_format: TODO

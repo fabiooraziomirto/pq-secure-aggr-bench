@@ -1,0 +1,14 @@
+Bootstrap: docker
+From: TODO
+
+%files
+    . /app
+
+%post
+    # TODO: base image, Python, dependency pins/hashes and KEM backend.
+    cd /app
+    python -m pip install '.[test]'
+
+%runscript
+    cd /app
+    exec python -m pytest -q "$@"

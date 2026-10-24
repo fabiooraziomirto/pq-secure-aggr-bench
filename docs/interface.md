@@ -54,7 +54,8 @@ n × round-to-even(clip_bound × 2^scale_bits), includendo l’arrotondamento.
 `clip_bound=None` lascia solo il controllo esatto del simulatore. Un round iniziato
 consuma l’indice anche in caso di errore: non riutilizzarlo.
 
-Ogni coppia ordinata lessicograficamente esegue una KEM in setup. HKDF-SHA256
+Ogni coppia ordinata lessicograficamente esegue una KEM in setup e a ogni rekey.
+Si generano solo n−1 coppie di chiavi, poiché l’ID minimo non è mai destinatario. HKDF-SHA256
 usa come info la codifica JSON ASCII compatta della lista
 `["pqfl/scheme-a/mask/v2", epoch, round_idx, left, right]`, salt assente, output 32 byte.
 ChaCha20 di cryptography espande con nonce di 16 byte nullo: la chiave derivata
@@ -128,7 +129,8 @@ non deve inserire segreti neppure nei metadati testuali o nel file configurazion
 La frontiera include solo payload dei messaggi di protocollo: chiavi pubbliche,
 ciphertext, tag di conferma, vettori mascherati e risultato aggregato, con diffusione a tutti i
 siti inclusa. Tutti i conteggi usano `len()` dei messaggi realmente serializzati,
-mai una formula stimata. Esclusi framing di trasporto, TLS e autenticazione.
+mai una formula stimata. Esclusi framing di trasporto, TLS e autenticazione del canale (i tag di conferma
+del protocollo A sono invece inclusi).
 `serialize_masked` codifica ogni intero modulare canonico in
 `ceil(modulus_bits/8)` byte little-endian, ordine C, senza intestazione.
 Forma e bit sono concordati fuori banda; `deserialize_masked` rifiuta lunghezze
@@ -185,3 +187,20 @@ L'harness registra un campo opzionale `summary` con operazione, meccanismo,
 ripetizioni, warm-up, percentili in secondi (interpolazione lineare), frontiera
 temporale e frontiera dei byte. `duration_s` è la mediana dei campioni; ogni riga
 è un riepilogo e non una singola osservazione o un round di aggregazione.
+
+## Controlli funzionali e regressione
+
+`_masked_site(site, round_idx, quantized)` è un metodo interno del simulatore:
+restituisce una copia mascherata del vettore già quantizzato, calcolando soltanto
+le maschere di quel sito. È esposto per verificare la mascheratura, non è un
+endpoint e non deve essere usato per aggirare l’univocità dei round pubblici.
+I test su 100000 elementi e sui bit sono controlli sintetici, non benchmark.
+Il vettore dorato è stato ottenuto eseguendo questa implementazione con seed
+INSECURE di test; serve a rilevare cambiamenti, non certifica HKDF o ChaCha20.
+
+Le nuove eccezioni sono in `pqfl.aggregators.errors` (anche importabili da
+scheme_a). Un `KeyConfirmationError` invalida la disponibilità dell’epoca;
+un `AggregateOverflowError` non restituisce alcun risultato e consuma il round.
+Nessun valore segreto viene inserito nei messaggi di errore o nei log.
+Il controllo esatto della somma aggiunge lavoro di sicurezza al simulatore:
+non è un costo implementabile dal reducer senza accesso ai singoli aggiornamenti.

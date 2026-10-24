@@ -9,7 +9,7 @@ Python >=3.10 (minimo richiesto dalle annotazioni); versione del runtime di
 riferimento e versioni riproducibili delle dipendenze: TODO.
 
 ```bash
-cd /workspace/pq-secure-aggr-bench
+cd /path/to/pq-secure-aggr-bench
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[test]'
@@ -40,8 +40,8 @@ liboqs e tc; non certifica sicurezza, interoperabilità o permessi di rete.
 Non salvare dati clinici, chiavi, segreti o credenziali. Usare identificatori
 neutri e non aggiungere autori, affiliazioni o ringraziamenti per double-blind.
 
-I log JSONL usano `schema_version: 2` e `run_seed` pubblico dalla configurazione
-YAML (intero non negativo da scegliere al posto di TODO). Non viene usato per
+I log JSONL usano `schema_version: 2`, `site`, `epoch`, delta dei byte sommabili
+per operazione e `run_seed` pubblico dalla configurazione YAML (intero non negativo da scegliere al posto di TODO). Non viene usato per
 inizializzare KEM reali; nessun materiale crittografico deve essere registrato.
 
 ## Backend reale e verifica sul cluster
@@ -130,3 +130,33 @@ delle ripetizioni: keygen/decaps zero, encaps ciphertext iniziatore→rispondito
 handshake anche chiave pubblica risponditore→iniziatore. Non sommare le quattro
 righe. Per confrontare B/C adottare identica frontiera API, percentili, warm-up,
 ruoli, hardware e politica dei byte; confronti wire richiedono un harness distinto.
+
+## Contratto aggiornato dello schema A
+
+Il reducer è un attore separato: i byte comprendono upload e diffusione del
+risultato, calcolati con len dei messaggi serializzati. Nessuna riga comm nel
+simulatore. Le righe Metrics riportano delta per attore; `stats()` riporta totali
+dell’ultima operazione. I tempi crypto sono separati per sito, con ogni lato
+che calcola le proprie copie delle maschere.
+
+`rekey()` rigenera le chiavi e i seed di tutte le coppie, incrementa epoch e
+conserva l’univocità dei round. `rekey_every_rounds: TODO` non attiva alcuna
+politica automatica. L’info delle maschere passa a mask/v2 con epoch esplicita.
+La conferma bidirezionale HMAC rileva segreti non corrispondenti e può sollevare
+`KeyConfirmationError`; non autentica la provenienza delle chiavi pubbliche.
+`clip_bound` è opzionale e rifiuta aggiornamenti oltre il limite; setup ne verifica
+la sicurezza per il numero effettivo di siti. `AggregateOverflowError` rileva una
+somma quantizzata fuori range soltanto nel simulatore che vede i testi in chiaro.
+
+I test extra includono vettori sintetici di 100000 elementi, controllo dei bit,
+rekey, conferma, overflow, payload/delta e rifiuto X25519 di ordine basso.
+Il vettore dorato di mask/v2 è una regressione prodotta dall’implementazione,
+non un vettore crittografico indipendente. Questi controlli non provano sicurezza.
+
+`tests/test_kem_interop.py` rileva opzioni reali di `openssl pkeyutl -help` e
+supporto ML-KEM-768 prima di usare genpkey/pkey/pkeyutl per due round trip
+incrociati con liboqs. Conserva gli identificatori ASN.1 esportati da OpenSSL,
+senza ipotizzare codifiche della chiave privata. I file temporanei sono esterni
+al repository. Se CLI/capacità/binding mancano, salta con motivo e TODO cluster.
+Eseguire sul cluster `python -m pytest -q -rs`; non installare nulla da rete
+nell’ambiente di questa sessione e non avviare l’harness di benchmark.

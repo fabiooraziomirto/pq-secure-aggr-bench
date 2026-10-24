@@ -99,7 +99,9 @@ def test_logs_contain_no_secrets(tmp_path, fake_kem_factory, monkeypatch):
                 "duration_s", "bytes_sent", "bytes_received", "peak_mem_gpu_mb",
                 "peak_mem_host_mb", "timestamp", "library_versions"}
     for row in rows:
-        assert set(row) == required
+        assert set(row) == required | ({"env"} if row is rows[0] else set())
+        if row is rows[0]:
+            assert {"python", "cryptography", "cpu_model", "liboqs", "enabled_kems", "enabled_sigs"} <= row["env"].keys()
         assert row["run_seed"] == config["run_seed"]
         assert row["schema_version"] == 2
         assert row["site"] in [*SITES, "reducer"]

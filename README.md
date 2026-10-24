@@ -9,7 +9,7 @@ Python >=3.10 (minimo richiesto dalle annotazioni); versione del runtime di
 riferimento e versioni riproducibili delle dipendenze: TODO.
 
 ```bash
-cd /path/to/pq-secure-aggr-bench
+cd pq-secure-aggr-bench
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[test]'
@@ -160,3 +160,16 @@ senza ipotizzare codifiche della chiave privata. I file temporanei sono esterni
 al repository. Se CLI/capacità/binding mancano, salta con motivo e TODO cluster.
 Eseguire sul cluster `python -m pytest -q -rs`; non installare nulla da rete
 nell’ambiente di questa sessione e non avviare l’harness di benchmark.
+
+## Test reali obbligatori
+
+Con Python dell’ambiente attivo, `make test-real` esegue tutti i test marcati
+`requires_oqs` e fallisce anche se uno solo è saltato (inclusa l’assenza dei KAT).
+Per la suite completa usare `make test`. Non è un benchmark.
+`scripts/check_env.py` stampa versioni effettive Python/cryptography/liboqs,
+CPU e algoritmi KEM/SIG; lo stesso oggetto pubblico appare nel campo opzionale
+`env` del primo record di setup di ogni run, mantenendo schema_version=2.
+Installazione reale tentata ed esito sono documentati in `docs/decisions.md`.
+Il binding 0.16.0.1 è installato, ma la libreria nativa non è stata compilata:
+manca CMake e non sono state introdotte dipendenze ulteriori. I test reali restano
+skip espliciti, mentre `make test-real` deve fallire finché il cluster non è pronto.

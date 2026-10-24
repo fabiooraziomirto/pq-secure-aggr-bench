@@ -33,3 +33,23 @@ class FakeKEM:
 @pytest.fixture
 def fake_kem_factory():
     return FakeKEM
+
+
+def pytest_addoption(parser):
+    parser.addoption("--fail-on-oqs-skip", action="store_true",
+                     help="Fail the session if any requires_oqs test is skipped")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.skipped and item.get_closest_marker("requires_oqs"):
+        item.config._pqfl_real_skipped = True
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if session.config.getoption("--fail-on-oqs-skip"):
+        selected = any(item.get_closest_marker("requires_oqs") for item in session.items)
+        if not selected or getattr(session.config, "_pqfl_real_skipped", False):
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED

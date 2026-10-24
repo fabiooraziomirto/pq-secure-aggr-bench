@@ -8,6 +8,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from pqfl.kem.backends import BackendUnavailable, LibOQSKEM
+
+pytestmark = pytest.mark.requires_oqs
 from pqfl.kem.hybrid import HybridKEM
 
 
@@ -42,6 +44,8 @@ def test_hybrid_round_trip(real_kem):
     public, secret = kem.keygen()
     ciphertext, shared = kem.encaps(public)
     assert len(shared) == 32
+    assert len(public) == 1259
+    assert len(ciphertext) == 1149
     if kem.decaps(secret, ciphertext) != shared:
         pytest.fail("Hybrid KEM round trip failed; secret values suppressed")
 

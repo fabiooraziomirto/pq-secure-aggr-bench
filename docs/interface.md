@@ -204,3 +204,17 @@ un `AggregateOverflowError` non restituisce alcun risultato e consuma il round.
 Nessun valore segreto viene inserito nei messaggi di errore o nei log.
 Il controllo esatto della somma aggiunge lavoro di sicurezza al simulatore:
 non è un costo implementabile dal reducer senza accesso ai singoli aggiornamenti.
+
+## Metadati runtime e dimensioni ibride
+
+Schema_version rimane 2. `env` è una chiave opzionale sul primo record di setup
+(epoch=0, round=null), prodotta dallo stesso collector di `scripts/check_env.py`:
+versioni Python, cryptography, binding e liboqs, CPU e liste KEM/SIG abilitate.
+Libreria nativa assente: versione null, liste vuote e oqs_available=false.
+Non si registrano valori di variabili d’ambiente o segreti.
+
+Per il pack ibrido v1 con nome esatto ML-KEM-768: pk totale **1259 byte**,
+ct totale **1149 byte**. Questi numeri sono stati verificati sul serializer con
+componenti delle dimensioni standard (pk PQ 1184, ct PQ 1088, X25519 32), non
+con un backend nativo funzionante. I test reali controllano le stesse dimensioni
+oltre al segreto di 32 byte e al round trip. Non sono misure di prestazioni.

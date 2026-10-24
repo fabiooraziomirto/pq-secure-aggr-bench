@@ -7,6 +7,8 @@ import pytest
 
 from pqfl.kem.backends import BackendUnavailable, LibOQSKEM
 
+pytestmark = pytest.mark.requires_oqs
+
 
 def _run(executable, *args):
     result = subprocess.run([executable, *map(str, args)], capture_output=True, timeout=30)

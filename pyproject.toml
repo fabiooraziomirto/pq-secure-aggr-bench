@@ -11,7 +11,9 @@ dependencies = ["numpy", "cryptography", "PyYAML"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+real = ["liboqs-python==0.16.0.1"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["requires_oqs: requires native liboqs and official Python bindings"]

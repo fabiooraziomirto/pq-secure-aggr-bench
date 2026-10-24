@@ -55,6 +55,7 @@ class JSONLWriter:
         if type(run_seed) is not int or run_seed < 0:
             raise ValueError("Set run_seed to a nonnegative experiment seed in the configuration")
         self.library_versions = dict(library_versions or {})
+        self._env_written = False
         self.path = path
         self.metadata = dict(run_id=run_id, config_hash=config_hash,
                              scheme=scheme, dp_level=dp_level, run_seed=run_seed, schema_version=2)
@@ -91,12 +92,18 @@ class JSONLWriter:
                    peak_mem_host_mb=None, timestamp=datetime.now(timezone.utc).isoformat(),
                    library_versions={**{name: version(name) for name in ("numpy", "cryptography")},
                                      **self.library_versions})
+        include_env = not self._env_written and round_idx is None and epoch == 0
+        if include_env:
+            from pqfl.logging.environment import environment_metadata
+            row["env"] = environment_metadata()
         if summary is not None:
             if not isinstance(summary, HandshakeSummary):
                 raise TypeError("summary must be a HandshakeSummary, not an arbitrary payload")
             row["summary"] = asdict(summary)
         with open(self.path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, allow_nan=False) + "\n")
+        if include_env:
+            self._env_written = True
 
 
 class Metrics:

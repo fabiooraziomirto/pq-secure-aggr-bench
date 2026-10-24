@@ -26,3 +26,43 @@
 | 2026-10-24 | clip_bound opzionale e controllo esatto dell’overflow nel simulatore | Il costruttore non conosce n: valida il limite minimo per 2 siti; setup valida n e margine di arrotondamento. In produzione richiede un limite verificato localmente | Adottata |
 | 2026-10-24 | Vettore dorato mask/v2 generato dalla funzione corrente | Regressione di compatibilità, non controllo indipendente né vettore NIST | Adottata |
 | 2026-10-24 | Interoperabilità liboqs/OpenSSL condizionata alle capacità reali | Opzioni encap/decap verificate nell’help locale; resta da eseguire con binding e libreria sul cluster | Da verificare |
+
+## Decisioni D/E/F
+
+| Data | Decisione | Motivo | Stato |
+| --- | --- | --- | --- |
+| 2026-10-24 | D: binding liboqs-python 0.16.0.1 e liboqs 0.16.0 candidata | Binding installato, build nativa ferma per CMake assente; nessuna nuova dipendenza oltre al binding | Bloccata sul runtime attuale |
+| 2026-10-24 | D: requires_oqs e make test-real senza skip ammessi | Evitare che test reali non eseguiti producano un esito di readiness | Adottata |
+| 2026-10-24 | D: env opzionale nel setup, schema_version resta 2 | Metadati pubblici identici al collector check_env.py | Adottata |
+
+### D: comandi eseguiti e provenienza
+
+Comandi effettivamente usati (percorsi di questa istanza, non del cluster):
+
+```bash
+/workspace/pqfl-venv/bin/python -m pip install liboqs-python
+git clone --depth 1 --branch 0.16.0 https://github.com/open-quantum-safe/liboqs.git /tmp/pqfl-liboqs-0.16.0
+cmake -S /tmp/pqfl-liboqs-0.16.0 -B /tmp/pqfl-liboqs-build -DCMAKE_INSTALL_PREFIX=/workspace/pqfl-oqs -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_ENABLE_KEM_ml_kem_768=ON -DOQS_ENABLE_SIG_ml_dsa_65=ON
+```
+
+Binding installato: 0.16.0.1, senza dipendenze aggiuntive. Sorgenti liboqs tag
+0.16.0, commit `5a1a854b0dc9f2141bdc771c555ee60c37950183`.
+Configurazione terminata con exit 127: `cmake: command not found`. Nessuna
+compilazione/installazione nativa eseguita; non si è attivato l’installer
+automatico del binding e non si dichiara ML-KEM/ML-DSA funzionante.
+CMake non è stato installato per rispettare il vincolo sulle nuove dipendenze.
+Dopo aver predisposto il toolchain sul cluster, i passi non ancora eseguiti sono
+`cmake --build /tmp/pqfl-liboqs-build --parallel 2` e
+`cmake --install /tmp/pqfl-liboqs-build`; poi impostare OQS_INSTALL_PATH e
+verificare algoritmi abilitati e `make test-real`.
+
+KAT ufficiali scaricati fuori dal repository in `/workspace/pqfl-kats/ML-KEM-768`:
+NIST ACVP-Server commit `975de31eb83d87039ec88934fdc47d8c312b892d`, percorso
+`gen-val/json-files/ML-KEM-encapDecap-FIPS203`, via HTTPS raw.githubusercontent.com.
+`prompt.json` SHA256 `998e22dfb12efb14ce9fdff911ca634b13612819a1806f25da69adba7e16db91`;
+`expectedResults.json` SHA256 `9089ec6ff2424da9f2782b89b2f831a329a3e28d6e5e24b802b78ff36ac61cdf`.
+Usare PQFL_KAT_DIR con la directory padre. Vettori non fabbricati né aggiunti
+al repository; non ancora verificati contro liboqs perché manca il backend.
+I cinque test reali restano saltati per libreria nativa non caricabile:
+component_sizes, real_round_trip, hybrid_round_trip, known_answers e
+mlkem_liboqs_openssl_interoperability. Il binding Python da solo non basta.

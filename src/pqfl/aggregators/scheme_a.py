@@ -1,9 +1,14 @@
 from copy import deepcopy
 from itertools import combinations
+import hmac
+import math
+from numbers import Real
 
 import numpy as np
 
 from pqfl.aggregators.base import Aggregator
+from pqfl.aggregators.errors import AggregateOverflowError, KeyConfirmationError
+from pqfl.masking import confirmation
 from pqfl.kem.base import KEM
 from pqfl.logging.metrics import Metrics, RoundStats
 from pqfl.masking.core import Tensor, dequantize, pairwise_mask, quantize, validate_parameters
@@ -17,13 +22,34 @@ class SchemeA(Aggregator):
     authenticated hybrid transport remain separate integration requirements.
     """
 
-    def __init__(self, kem: KEM, *, scale_bits: int, modulus_bits: int, writer=None):
+    def __init__(self, kem: KEM, *, scale_bits: int, modulus_bits: int, writer=None,
+                 clip_bound: float | None = None):
         validate_parameters(scale_bits, modulus_bits)
         self.kem, self.scale_bits, self.modulus_bits = kem, scale_bits, modulus_bits
+        self.clip_bound = clip_bound
+        if clip_bound is not None:
+            if isinstance(clip_bound, bool) or not isinstance(clip_bound, Real):
+                raise ValueError("clip_bound must be a finite nonnegative number or None")
+            if not math.isfinite(clip_bound) or clip_bound < 0:
+                raise ValueError("clip_bound must be finite and nonnegative")
+            # At construction n is unknown. Reject even the minimum n=2 if unsafe;
+            # setup checks the actual participant count before generating keys.
+            self._validate_clip_count(2)
         self.writer = writer
         self.sites = None
         self.used_rounds = set()
         self.epoch = 0
+        self._ready = False
+
+    def _validate_clip_count(self, count: int) -> None:
+        if self.clip_bound is not None:
+            scaled_bound = self.clip_bound * (2 ** self.scale_bits)
+            limit = 2 ** (self.modulus_bits - 1)
+            if count * scaled_bound >= limit:
+                raise ValueError("clip_bound cannot guarantee a signed aggregate without overflow")
+            # Include rounding in the conservative production-side bound as well.
+            if count * int(np.rint(scaled_bound)) >= limit:
+                raise ValueError("Rounded clip_bound cannot guarantee a signed aggregate")
 
     def setup(self, site_ids: list[str]) -> None:
         if self.sites is not None:
@@ -32,11 +58,28 @@ class SchemeA(Aggregator):
             raise ValueError("Require at least two nonempty site IDs")
         if len(set(site_ids)) != len(site_ids) or "reducer" in site_ids:
             raise ValueError("Duplicate or reserved site ID")
+        self._validate_clip_count(len(site_ids))
         self.sites = sorted(site_ids)
         self.actors = [*self.sites, "reducer"]
-        self.metrics = Metrics(self.actors, self.writer, epoch=self.epoch)
+        self._exchange_keys()
+        self.setup_stats = deepcopy(self.metrics.counter.value)
+
+    def rekey(self) -> None:
+        if self.sites is None:
+            raise ValueError("Call setup first")
+        self.epoch += 1
+        self._exchange_keys()
+        self.rekey_stats = deepcopy(self.metrics.counter.value)
+
+    def _exchange_keys(self) -> None:
+        # Invalidate the previous epoch before attempting a replacement. A failed
+        # confirmation must never leave old keys usable under the new epoch.
+        self._ready = False
         self.seeds = {}
-        self._site_seeds = {site: {} for site in self.sites}
+        self._site_seeds = {}
+        self.metrics = Metrics(self.actors, self.writer, epoch=self.epoch)
+        seeds = {}
+        site_seeds = {site: {} for site in self.sites}
         keys = {}
         # The smallest site ID never receives encapsulations: only n-1 keypairs.
         for site in self.sites[1:]:
@@ -48,14 +91,28 @@ class SchemeA(Aggregator):
                 self.metrics.counter.transfer(right, left, len(public))
                 ciphertext, seed = self.kem.encaps(public)
                 self.metrics.counter.transfer(left, right, len(ciphertext))
+                left_key = confirmation.confirmation_key(seed, self.epoch, left, right, public, ciphertext)
+                left_tag = confirmation.confirmation_tag(left_key, "left")
+                self.metrics.counter.transfer(left, right, len(left_tag))
             with self.metrics.phase_timer("crypto", site=right):
                 recovered = self.kem.decaps(secret, ciphertext)
-                if recovered != seed:
-                    raise ValueError("KEM shared secret mismatch")
-            self.seeds[left, right] = seed
-            self._site_seeds[left][left, right] = seed
-            self._site_seeds[right][left, right] = recovered
-        self.setup_stats = deepcopy(self.metrics.counter.value)
+                right_key = confirmation.confirmation_key(recovered, self.epoch, left, right,
+                                                          public, ciphertext)
+                expected_left = confirmation.confirmation_tag(right_key, "left")
+                if not hmac.compare_digest(left_tag, expected_left):
+                    raise KeyConfirmationError("Peer key confirmation failed")
+                right_tag = confirmation.confirmation_tag(right_key, "right")
+                self.metrics.counter.transfer(right, left, len(right_tag))
+            with self.metrics.phase_timer("crypto", site=left):
+                expected_right = confirmation.confirmation_tag(left_key, "right")
+                if not hmac.compare_digest(right_tag, expected_right):
+                    raise KeyConfirmationError("Peer key confirmation failed")
+            seeds[left, right] = seed
+            site_seeds[left][left, right] = seed
+            site_seeds[right][left, right] = recovered
+        self.seeds = seeds
+        self._site_seeds = site_seeds
+        self._ready = True
 
     def _masked_site(self, site: str, round_idx: int, quantized: Tensor) -> Tensor:
         """Return this site's masked vector from its own quantized input."""
@@ -63,13 +120,14 @@ class SchemeA(Aggregator):
         masked = quantized.copy()
         with self.metrics.phase_timer("crypto", site=site):
             for (left, right), seed in self._site_seeds[site].items():
-                mask = pairwise_mask(seed, round_idx, left, right, quantized.shape, self.modulus_bits)
+                mask = pairwise_mask(seed, round_idx, left, right, quantized.shape, self.modulus_bits,
+                                     epoch=self.epoch)
                 masked = (masked + mask if site == left else masked - mask) % modulus
         return masked
 
     def aggregate_round(self, round_idx: int, updates: dict[str, Tensor]) -> Tensor:
-        if self.sites is None:
-            raise ValueError("Call setup first")
+        if not self._ready:
+            raise ValueError("A successful setup or rekey is required")
         if type(round_idx) is not int or round_idx < 0 or round_idx in self.used_rounds:
             raise ValueError("Round must be nonnegative and never reused within a session")
         if set(updates) != set(self.sites):
@@ -82,14 +140,24 @@ class SchemeA(Aggregator):
         self.metrics.round_idx = round_idx
         modulus = 2 ** self.modulus_bits
         messages = {}
+        # Simulator-only: a real reducer cannot inspect the plaintext sum. Python
+        # integers avoid overflow in the safety check even for many participants.
+        signed_total = np.zeros(shape, dtype=object)
         for site in self.sites:
             with self.metrics.phase_timer("compute", site=site):
-                quantized = quantize(updates[site], self.scale_bits, self.modulus_bits)
+                values = np.asarray(updates[site], dtype=np.float64)
+                if self.clip_bound is not None and np.any(np.abs(values) > self.clip_bound):
+                    raise ValueError("Update exceeds clip_bound")
+                quantized = quantize(values, self.scale_bits, self.modulus_bits)
+                signed = np.where(quantized >= modulus // 2, quantized - modulus, quantized)
+                signed_total += signed.astype(object)
             masked = self._masked_site(site, round_idx, quantized)
             with self.metrics.phase_timer("compute", site=site):
                 messages[site] = serialize_masked(masked, self.modulus_bits)
                 self.metrics.counter.transfer(site, "reducer", len(messages[site]))
         with self.metrics.phase_timer("compute", site="reducer"):
+            if np.any(signed_total < -modulus // 2) or np.any(signed_total >= modulus // 2):
+                raise AggregateOverflowError("Signed aggregate exceeds the selected modular range")
             total = np.zeros(shape, dtype=np.int64)
             for message in messages.values():
                 total = (total + deserialize_masked(message, shape, self.modulus_bits)) % modulus

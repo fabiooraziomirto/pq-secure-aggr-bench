@@ -21,3 +21,6 @@
 | 2026-10-24 | Setup A: generare n−1 coppie di chiavi | Prima si generavano n coppie, ma il sito con ID minimo non è mai destinatario; timer solo per le chiavi necessarie e invio della chiave pubblica a ogni coppia interessata | Adottata |
 | 2026-10-24 | Payload serializzati e diffusione inclusa, reducer come attore | Byte da len dei messaggi; nessun framing di trasporto o tempo comm fittizio | Adottata |
 | 2026-10-24 | JSONL schema_version=2, site, epoch e delta dei byte | Tempi attribuibili per sito, righe sommabili per operazione; sostituisce gli snapshot cumulativi | Adottata |
+| 2026-10-24 | Politica di rekey: frequenza TODO, chiamata esplicita | Nuove chiavi e seed per tutte le coppie, epoch crescente, round univoci nell’intera sessione | Aperta |
+| 2026-10-24 | Conferma bidirezionale HKDF/HMAC con ruoli e trascrizione | Rilevare segreti diversi da rifiuto implicito senza confronto diretto dei seed; contare i tag | Adottata |
+| 2026-10-24 | clip_bound opzionale e controllo esatto dell’overflow nel simulatore | Il costruttore non conosce n: valida il limite minimo per 2 siti; setup valida n e margine di arrotondamento. In produzione richiede un limite verificato localmente | Adottata |

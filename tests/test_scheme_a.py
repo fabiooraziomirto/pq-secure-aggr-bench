@@ -33,8 +33,8 @@ def test_masked_sum_matches_plaintext(fake_kem_factory):
 
 
 def test_masks_change_across_rounds():
-    first = pairwise_mask(b"test-only-seed", 0, "A", "B", (128,), 32)
-    second = pairwise_mask(b"test-only-seed", 1, "A", "B", (128,), 32)
+    first = pairwise_mask(b"test-only-seed", 0, "A", "B", (128,), 32, epoch=0)
+    second = pairwise_mask(b"test-only-seed", 1, "A", "B", (128,), 32, epoch=0)
     assert not np.array_equal(first, second)
 
 
@@ -49,8 +49,8 @@ def test_seed_determinism(fake_kem_factory):
     assert first.seeds == second.seeds
     for pair in first.seeds:
         np.testing.assert_array_equal(
-            pairwise_mask(first.seeds[pair], 0, *pair, (8,), 32),
-            pairwise_mask(second.seeds[pair], 0, *pair, (8,), 32))
+            pairwise_mask(first.seeds[pair], 0, *pair, (8,), 32, epoch=0),
+            pairwise_mask(second.seeds[pair], 0, *pair, (8,), 32, epoch=0))
     np.testing.assert_array_equal(first.aggregate_round(0, UPDATES), second.aggregate_round(0, UPDATES))
 
 
@@ -74,6 +74,16 @@ def test_logs_contain_no_secrets(tmp_path, fake_kem_factory, monkeypatch):
         return result
 
     monkeypatch.setattr(HKDF, "derive", capture_derive)
+    from pqfl.masking import confirmation
+    tags = []
+    original_tag = confirmation.confirmation_tag
+
+    def capture_tag(*args):
+        tag = original_tag(*args)
+        tags.append(tag)
+        return tag
+
+    monkeypatch.setattr(confirmation, "confirmation_tag", capture_tag)
     path = tmp_path / "run.jsonl"
     config = yaml.safe_load(Path("configs/experiment.yaml").read_text())
     config.update(run_id="unit-test", dp_level="none", run_seed=42)
@@ -84,7 +94,7 @@ def test_logs_contain_no_secrets(tmp_path, fake_kem_factory, monkeypatch):
     agg.aggregate_round(0, UPDATES)
     text = path.read_text()
     rows = [json.loads(line) for line in text.splitlines()]
-    assert len(rows) == 21
+    assert len(rows) == 24
     required = {"run_id", "config_hash", "scheme", "dp_level", "run_seed", "schema_version", "round", "phase", "site", "epoch",
                 "duration_s", "bytes_sent", "bytes_received", "peak_mem_gpu_mb",
                 "peak_mem_host_mb", "timestamp", "library_versions"}
@@ -100,13 +110,15 @@ def test_logs_contain_no_secrets(tmp_path, fake_kem_factory, monkeypatch):
     # Scan every generated key/shared secret/ciphertext and each derived mask.
     material = list(agg.kem.generated_material)
     for pair, seed in agg.seeds.items():
-        material.append(pairwise_mask(seed, 0, *pair, (2,), 32).tobytes())
+        material.append(pairwise_mask(seed, 0, *pair, (2,), 32, epoch=0).tobytes())
     material.extend(derived_keys)
+    material.extend(tags)
+    assert tags and all(len(tag) == 32 for tag in tags)
     for seed in material:
         assert seed.hex() not in text
         assert base64.b64encode(seed).decode("ascii") not in text
         assert str(seed) not in text
-    for forbidden in ("secret", "public_key", "private_key", "mask", "ciphertext"):
+    for forbidden in ("secret", "public_key", "private_key", "mask", "ciphertext", "tag"):
         assert forbidden not in text
 
 

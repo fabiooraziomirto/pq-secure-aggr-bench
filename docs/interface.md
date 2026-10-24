@@ -27,24 +27,48 @@ negativi univoci nella sessione. Riavviare una sessione reale richiederà nuove
 chiavi e un identificatore di sessione concordato; la gestione persistente è TODO.
 `stats()` restituisce una copia dei contatori per attore (siti e `reducer`) dell'ultima operazione:
 dopo setup sono costi setup, dopo un round solo i costi di quel round.
-Lo schema A conserva anche `setup_stats`; non è un'estensione obbligatoria API.
+Lo schema A conserva `setup_stats` e, dopo rekey, `rekey_stats`; non sono
+estensioni obbligatorie API. `rekey()` ripete lo scambio per tutte le coppie,
+genera n−1 nuove coppie di chiavi e incrementa epoch. `used_rounds` non si azzera:
+gli indici restano univoci in tutta la sessione. Frequenza automatica assente:
+`rekey_every_rounds: TODO`, decide il chiamante. Setup usa epoch=0, rekey round=null
+e la nuova epoca. Una conferma fallita invalida la disponibilità dei seed: nessun
+round è ammesso finché un nuovo rekey non termina con successo.
 
 ## Schema A
 
-`SchemeA(kem, scale_bits=..., modulus_bits=..., writer=None)` richiede entrambi
+`SchemeA(kem, scale_bits=..., modulus_bits=..., writer=None, clip_bound=None)` richiede entrambi
 i parametri senza default: `0 <= scale_bits < modulus_bits <= 62`.
 Quantizzazione: arrotondamento al più vicino con pareggi al pari, passo
 `2**(-scale_bits)`, errore individuale al massimo mezzo passo. Ogni aggiornamento
 deve rientrare nell'intervallo con segno; anche la somma deve rientrarvi per
-interpretare correttamente la dequantizzazione. La somma modulare non rileva
-l'overflow aggregato: scelta dei limiti e clipping sono TODO del protocollo.
+interpretare correttamente la dequantizzazione. Il simulatore controlla la somma intera quantizzata con interi Python: se esce da
+[-2^(modulus_bits−1), 2^(modulus_bits−1)−1] solleva `AggregateOverflowError`.
+È possibile soltanto perché conosce gli input: un reducer reale non può farlo.
+In produzione serve un `clip_bound` verificato per sito, non la fiducia nel reducer.
+Il parametro opzionale non applica clipping: rifiuta coordinate con |x| oltre il
+limite. Il costruttore verifica finitezza, non negatività e sicurezza per almeno
+2 siti; `setup` verifica n × clip_bound × 2^scale_bits < 2^(modulus_bits−1),
+quando n è noto, prima di generare chiavi. Si verifica anche il limite conservativo
+n × round-to-even(clip_bound × 2^scale_bits), includendo l’arrotondamento.
+`clip_bound=None` lascia solo il controllo esatto del simulatore. Un round iniziato
+consuma l’indice anche in caso di errore: non riutilizzarlo.
 
 Ogni coppia ordinata lessicograficamente esegue una KEM in setup. HKDF-SHA256
 usa come info la codifica JSON ASCII compatta della lista
-`["pqfl/scheme-a/mask/v1", round_idx, left, right]`, salt assente, output 32 byte.
+`["pqfl/scheme-a/mask/v2", epoch, round_idx, left, right]`, salt assente, output 32 byte.
 ChaCha20 di cryptography espande con nonce di 16 byte nullo: la chiave derivata
-cambia per coppia/round. Ogni elemento usa 8 byte little-endian troncati ai bit
+cambia per epoca/coppia/round. `pairwise_mask` richiede `epoch` esplicito. Ogni elemento usa 8 byte little-endian troncati ai bit
 modulari; l'ID minore aggiunge, il maggiore sottrae. Nessun round si può riusare.
+La KEM a rifiuto implicito non si verifica confrontando direttamente i segreti.
+Per ogni coppia si deriva una chiave di conferma HKDF-SHA256 (32 byte, salt assente)
+con info JSON ASCII compatto
+`["pqfl/scheme-a/confirm/v1", epoch, left, right, hex(SHA-256(public || ciphertext))]`.
+Ogni lato usa il proprio segreto, produce HMAC-SHA256 sul ruolo ASCII `left` o
+`right` e verifica il tag dell’altro con `hmac.compare_digest`. Due messaggi
+aggiuntivi da 32 byte per coppia, conteggiati con len, anche dopo rekey.
+Errore: `KeyConfirmationError`, senza materiale segreto nel messaggio.
+La conferma non autentica le identità o la provenienza della chiave pubblica.
 `recover_masks(...)` è uno stub per secret sharing dei seed; dropout rifiutato.
 Il backend liboqs reale e `pqfl.kem.HybridKEM` implementano ora KEM;
 il trasporto autenticato `HybridChannel` e il backend OpenSSL restano stub.
@@ -102,7 +126,7 @@ e separatori compatti. Collector memoria e inventario completo backend: TODO. Il
 non deve inserire segreti neppure nei metadati testuali o nel file configurazione.
 
 La frontiera include solo payload dei messaggi di protocollo: chiavi pubbliche,
-ciphertext, vettori mascherati e risultato aggregato, con diffusione a tutti i
+ciphertext, tag di conferma, vettori mascherati e risultato aggregato, con diffusione a tutti i
 siti inclusa. Tutti i conteggi usano `len()` dei messaggi realmente serializzati,
 mai una formula stimata. Esclusi framing di trasporto, TLS e autenticazione.
 `serialize_masked` codifica ogni intero modulare canonico in

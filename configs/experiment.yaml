@@ -16,3 +16,11 @@ run_seed: TODO
 network_emulation: TODO
 container_format: TODO
 rekey_every_rounds: TODO
+clip_bound: TODO
+participation_policy: all_or_abort
+auth:
+  method: pinned_fingerprint
+  # Per verifier: epoch -> owner -> SHA-256 fingerprint, provisioned out of band.
+  fingerprint_registries: TODO
+  # Only public trust configuration or secure storage references, never secret values.
+  identity_trust_configuration: TODO

@@ -3,11 +3,14 @@ from itertools import combinations
 import hmac
 import math
 from numbers import Real
+from typing import Callable
+
+from pqfl.auth import Authenticator, PinnedFingerprintAuth
 
 import numpy as np
 
 from pqfl.aggregators.base import Aggregator
-from pqfl.aggregators.errors import AggregateOverflowError, KeyConfirmationError
+from pqfl.aggregators.errors import AggregateOverflowError, KeyConfirmationError, MissingParticipantError
 from pqfl.masking import confirmation
 from pqfl.kem.base import KEM
 from pqfl.logging.metrics import Metrics, RoundStats
@@ -22,19 +25,23 @@ class SchemeA(Aggregator):
     authenticated hybrid transport remain separate integration requirements.
     """
 
-    def __init__(self, kem: KEM, *, scale_bits: int, modulus_bits: int, writer=None,
-                 clip_bound: float | None = None):
+    participation_policy = "all_or_abort"
+
+    def __init__(self, kem: KEM, *, scale_bits: int, modulus_bits: int, clip_bound: float,
+                 writer=None, authenticator: Authenticator | None = None,
+                 key_provider: Callable[[str, int], tuple[bytes, bytes]] | None = None):
         validate_parameters(scale_bits, modulus_bits)
         self.kem, self.scale_bits, self.modulus_bits = kem, scale_bits, modulus_bits
+        self.authenticator = authenticator if authenticator is not None else PinnedFingerprintAuth()
+        self.key_provider = key_provider
         self.clip_bound = clip_bound
-        if clip_bound is not None:
-            if isinstance(clip_bound, bool) or not isinstance(clip_bound, Real):
-                raise ValueError("clip_bound must be a finite nonnegative number or None")
-            if not math.isfinite(clip_bound) or clip_bound < 0:
-                raise ValueError("clip_bound must be finite and nonnegative")
-            # At construction n is unknown. Reject even the minimum n=2 if unsafe;
-            # setup checks the actual participant count before generating keys.
-            self._validate_clip_count(2)
+        if isinstance(clip_bound, bool) or not isinstance(clip_bound, Real):
+            raise ValueError("clip_bound must be a finite nonnegative number")
+        if not math.isfinite(clip_bound) or clip_bound < 0:
+            raise ValueError("clip_bound must be finite and nonnegative")
+        # At construction n is unknown. Reject even the minimum n=2 if unsafe;
+        # setup checks the actual participant count before generating keys.
+        self._validate_clip_count(2)
         self.writer = writer
         self.sites = None
         self.used_rounds = set()
@@ -42,14 +49,13 @@ class SchemeA(Aggregator):
         self._ready = False
 
     def _validate_clip_count(self, count: int) -> None:
-        if self.clip_bound is not None:
-            scaled_bound = self.clip_bound * (2 ** self.scale_bits)
-            limit = 2 ** (self.modulus_bits - 1)
-            if count * scaled_bound >= limit:
-                raise ValueError("clip_bound cannot guarantee a signed aggregate without overflow")
-            # Include rounding in the conservative production-side bound as well.
-            if count * int(np.rint(scaled_bound)) >= limit:
-                raise ValueError("Rounded clip_bound cannot guarantee a signed aggregate")
+        scaled_bound = self.clip_bound * (2 ** self.scale_bits)
+        limit = 2 ** (self.modulus_bits - 1)
+        if count * scaled_bound >= limit:
+            raise ValueError("clip_bound cannot guarantee a signed aggregate without overflow")
+        # Include rounding in the conservative production-side bound as well.
+        if count * int(np.rint(scaled_bound)) >= limit:
+            raise ValueError("Rounded clip_bound cannot guarantee a signed aggregate")
 
     def setup(self, site_ids: list[str]) -> None:
         if self.sites is not None:
@@ -84,11 +90,23 @@ class SchemeA(Aggregator):
         # The smallest site ID never receives encapsulations: only n-1 keypairs.
         for site in self.sites[1:]:
             with self.metrics.phase_timer("crypto", site=site):
-                keys[site] = self.kem.keygen()
+                keys[site] = (self.key_provider(site, self.epoch) if self.key_provider
+                              else self.kem.keygen())
+        proofs = {}
+        for site in self.sites[1:]:
+            with self.metrics.phase_timer("auth", site=site):
+                proofs[site] = self.authenticator.issue(site, self.epoch, keys[site][0])
         for left, right in combinations(self.sites, 2):
             public, secret = keys[right]
-            with self.metrics.phase_timer("crypto", site=left):
+            with self.metrics.phase_timer("auth", site=left):
+                proof = proofs[right]
                 self.metrics.counter.transfer(right, left, len(public))
+                if proof.identity_public:
+                    self.metrics.counter.transfer(right, left, len(proof.identity_public))
+                if proof.signature:
+                    self.metrics.counter.transfer(right, left, len(proof.signature))
+                self.authenticator.verify(left, right, self.epoch, public, proof)
+            with self.metrics.phase_timer("crypto", site=left):
                 ciphertext, seed = self.kem.encaps(public)
                 self.metrics.counter.transfer(left, right, len(ciphertext))
                 left_key = confirmation.confirmation_key(seed, self.epoch, left, right, public, ciphertext)
@@ -131,7 +149,7 @@ class SchemeA(Aggregator):
         if type(round_idx) is not int or round_idx < 0 or round_idx in self.used_rounds:
             raise ValueError("Round must be nonnegative and never reused within a session")
         if set(updates) != set(self.sites):
-            raise ValueError("All configured sites must participate; dropout unsupported")
+            raise MissingParticipantError("all_or_abort requires exactly the configured participants")
         shape = np.asarray(updates[self.sites[0]]).shape
         if any(np.asarray(u).shape != shape for u in updates.values()):
             raise ValueError("Mismatched tensor shapes")

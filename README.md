@@ -144,7 +144,7 @@ conserva l’univocità dei round. `rekey_every_rounds: TODO` non attiva alcuna
 politica automatica. L’info delle maschere passa a mask/v2 con epoch esplicita.
 La conferma bidirezionale HMAC rileva segreti non corrispondenti e può sollevare
 `KeyConfirmationError`; non autentica la provenienza delle chiavi pubbliche.
-`clip_bound` è opzionale e rifiuta aggiornamenti oltre il limite; setup ne verifica
+`clip_bound` è obbligatorio e keyword-only, senza default, e rifiuta aggiornamenti oltre il limite; setup ne verifica
 la sicurezza per il numero effettivo di siti. `AggregateOverflowError` rileva una
 somma quantizzata fuori range soltanto nel simulatore che vede i testi in chiaro.
 
@@ -173,3 +173,16 @@ Installazione reale tentata ed esito sono documentati in `docs/decisions.md`.
 Il binding 0.16.0.1 è installato, ma la libreria nativa non è stata compilata:
 manca CMake e non sono state introdotte dipendenze ulteriori. I test reali restano
 skip espliciti, mentre `make test-real` deve fallire finché il cluster non è pronto.
+
+## Chiavi autenticate e policy di partecipazione
+
+SchemeA richiede un clip_bound numerico esplicito e un registro attendibile:
+PinnedFingerprintAuth è il default, ma senza pin il setup fallisce. Per chiavi
+pre-provisionate usare il key_provider e registri per epoca; in alternativa
+iniettare MLDSAAuth con identità ML-DSA-65 e chiavi pubbliche pinnate fuori banda.
+Non fornire segreti nel YAML. I test funzionali non dedicati all’autenticazione
+iniettano un bypass INSECURE confinato ai test, mai scelto dal pacchetto.
+La fase auth conta chiavi identità e firme; schema_version resta 2.
+Il nome API esatto è `participation_policy="all_or_abort"`;
+siti mancanti causano MissingParticipantError e nessun risultato parziale.
+I test ML-DSA richiedono liboqs nativa e sono marcati requires_oqs.

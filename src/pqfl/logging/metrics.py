@@ -80,7 +80,7 @@ class JSONLWriter:
                    run_seed=config["run_seed"], library_versions=library_versions)
 
     def record(self, *, round_idx, phase, duration_s, stats, site=None, epoch=0, summary=None):
-        if phase not in {"compute", "crypto", "comm"}:
+        if phase not in {"auth", "compute", "crypto", "comm"}:
             raise ValueError("Unknown phase")
         if site is not None and not isinstance(site, str):
             raise ValueError("site must be a string or None")
@@ -116,7 +116,7 @@ class Metrics:
 
     @contextmanager
     def phase_timer(self, phase, *, site=None):
-        if phase not in {"compute", "crypto", "comm"}:
+        if phase not in {"auth", "compute", "crypto", "comm"}:
             raise ValueError("Unknown phase")
         start = time.perf_counter()
         try:

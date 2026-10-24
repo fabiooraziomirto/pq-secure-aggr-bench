@@ -10,6 +10,7 @@ import pytest
 import pqfl.aggregators.scheme_a as scheme_module
 from pqfl.aggregators.errors import AggregateOverflowError, KeyConfirmationError
 from pqfl.aggregators.scheme_a import SchemeA
+from conftest import InsecureTestAuth
 from pqfl.kem.hybrid import HybridKEM, _pack, _unpack
 from pqfl.logging.metrics import JSONLWriter, Metrics
 from pqfl.masking import confirmation
@@ -19,8 +20,8 @@ from pqfl.masking.wire import deserialize_masked, serialize_masked
 SITES = ["A", "B", "C"]
 
 
-def make(factory, *, writer=None, scale_bits=12, modulus_bits=32, clip_bound=None):
-    agg = SchemeA(factory(42), scale_bits=scale_bits, modulus_bits=modulus_bits,
+def make(factory, *, writer=None, scale_bits=12, modulus_bits=32, clip_bound=1.):
+    agg = SchemeA(factory(42), authenticator=InsecureTestAuth(), scale_bits=scale_bits, modulus_bits=modulus_bits,
                   clip_bound=clip_bound, writer=writer)
     agg.setup(SITES)
     return agg
@@ -103,7 +104,7 @@ def faulty_kem(factory):
 
 def test_wrong_shared_secret_is_detected_by_confirmation(fake_kem_factory):
     kem = faulty_kem(fake_kem_factory)
-    agg = SchemeA(kem, scale_bits=12, modulus_bits=32)
+    agg = SchemeA(kem, authenticator=InsecureTestAuth(), clip_bound=1., scale_bits=12, modulus_bits=32)
     with pytest.raises(KeyConfirmationError, match="^Peer key confirmation failed$"):
         agg.setup(SITES)
     assert not agg.seeds
@@ -114,7 +115,7 @@ def test_wrong_shared_secret_is_detected_by_confirmation(fake_kem_factory):
 def test_failed_rekey_invalidates_old_keys_and_can_recover(fake_kem_factory):
     kem = faulty_kem(fake_kem_factory)
     kem.fail = False
-    agg = SchemeA(kem, scale_bits=12, modulus_bits=32)
+    agg = SchemeA(kem, authenticator=InsecureTestAuth(), clip_bound=1., scale_bits=12, modulus_bits=32)
     agg.setup(SITES)
     updates = {site: np.zeros(1) for site in SITES}
     agg.aggregate_round(0, updates)
@@ -154,17 +155,17 @@ def test_both_confirmation_directions_are_verified(fake_kem_factory, monkeypatch
 @pytest.mark.parametrize("bound", [-1., float("nan"), float("inf"), True, "1"])
 def test_invalid_clip_bound_rejected_at_construction(fake_kem_factory, bound):
     with pytest.raises(ValueError, match="clip_bound"):
-        SchemeA(fake_kem_factory(42), scale_bits=0, modulus_bits=8, clip_bound=bound)
+        SchemeA(fake_kem_factory(42), authenticator=InsecureTestAuth(), scale_bits=0, modulus_bits=8, clip_bound=bound)
 
 
 def test_clip_bound_checks_minimum_actual_count_and_rounding(fake_kem_factory):
     with pytest.raises(ValueError, match="clip_bound"):
-        SchemeA(fake_kem_factory(42), scale_bits=0, modulus_bits=8, clip_bound=64.)
-    agg = SchemeA(fake_kem_factory(42), scale_bits=0, modulus_bits=8, clip_bound=60.)
+        SchemeA(fake_kem_factory(42), authenticator=InsecureTestAuth(), scale_bits=0, modulus_bits=8, clip_bound=64.)
+    agg = SchemeA(fake_kem_factory(42), authenticator=InsecureTestAuth(), scale_bits=0, modulus_bits=8, clip_bound=60.)
     with pytest.raises(ValueError, match="clip_bound"):
         agg.setup(SITES)
     assert len(agg.kem.key_material) == 0
-    rounded = SchemeA(fake_kem_factory(42), scale_bits=0, modulus_bits=4, clip_bound=2.6)
+    rounded = SchemeA(fake_kem_factory(42), authenticator=InsecureTestAuth(), scale_bits=0, modulus_bits=4, clip_bound=2.6)
     with pytest.raises(ValueError, match="Rounded clip_bound"):
         rounded.setup(SITES)
     safe = make(fake_kem_factory, scale_bits=0, modulus_bits=8, clip_bound=40.)
@@ -176,6 +177,8 @@ def test_clip_bound_checks_minimum_actual_count_and_rounding(fake_kem_factory):
 @pytest.mark.parametrize("value", [100., -50.])
 def test_simulator_detects_signed_aggregate_overflow(fake_kem_factory, value):
     agg = make(fake_kem_factory, scale_bits=0, modulus_bits=8)
+    # Test-only fault injection bypasses the now mandatory safe clip bound.
+    agg.clip_bound = abs(value)
     with pytest.raises(AggregateOverflowError):
         agg.aggregate_round(0, {s: np.array([value]) for s in SITES})
     assert agg.used_rounds == {0}
@@ -183,8 +186,10 @@ def test_simulator_detects_signed_aggregate_overflow(fake_kem_factory, value):
 
 def test_overflow_guard_uses_unbounded_integer_sum(fake_kem_factory):
     sites = [str(i) for i in range(10)]
-    agg = SchemeA(fake_kem_factory(42), scale_bits=0, modulus_bits=62)
+    agg = SchemeA(fake_kem_factory(42), authenticator=InsecureTestAuth(), clip_bound=1., scale_bits=0, modulus_bits=62)
     agg.setup(sites)
+    # Test-only corrupted configuration exercises the independent overflow guard.
+    agg.clip_bound = float(2 ** 60)
     with pytest.raises(AggregateOverflowError):
         agg.aggregate_round(0, {s: np.array([2 ** 60], dtype=np.float64) for s in sites})
 
@@ -313,7 +318,7 @@ def test_setup_and_rekey_count_concrete_confirmation_messages(fake_kem_factory, 
 
     monkeypatch.setattr(kem, "encaps", capture_encaps)
     monkeypatch.setattr(confirmation, "confirmation_tag", capture_tag)
-    agg = SchemeA(kem, scale_bits=12, modulus_bits=32)
+    agg = SchemeA(kem, authenticator=InsecureTestAuth(), clip_bound=1., scale_bits=12, modulus_bits=32)
     agg.setup(SITES)
     if rekey:
         public_ciphertexts.clear()

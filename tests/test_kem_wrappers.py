@@ -9,6 +9,7 @@ from pqfl.kem import HybridKEM
 from pqfl.kem import backends
 from pqfl.kem.hybrid import _pack, _unpack
 from pqfl.aggregators.scheme_a import SchemeA
+from conftest import InsecureTestAuth
 import numpy as np
 
 
@@ -96,7 +97,7 @@ def test_combiner_binds_transcript_and_order():
 
 
 def test_hybrid_in_scheme_a(fake_kem_factory):
-    agg = SchemeA(HybridKEM(fake_kem_factory(42)), scale_bits=10, modulus_bits=32)
+    agg = SchemeA(HybridKEM(fake_kem_factory(42)), authenticator=InsecureTestAuth(), clip_bound=1., scale_bits=10, modulus_bits=32)
     agg.setup(["A", "B", "C"])
     updates = {site: np.array([0.5, -1.]) for site in ["A", "B", "C"]}
     np.testing.assert_array_equal(agg.aggregate_round(0, updates), sum(updates.values()))

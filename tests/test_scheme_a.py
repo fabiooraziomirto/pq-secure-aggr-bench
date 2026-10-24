@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from pqfl.aggregators.scheme_a import SchemeA
+from conftest import InsecureTestAuth
 from pqfl.aggregators.scheme_b import SchemeB
 from pqfl.aggregators.scheme_c import SchemeC
 from pqfl.channel.hybrid import HybridChannel
@@ -19,7 +20,7 @@ UPDATES = {"A": np.array([0.25, -1.5]), "B": np.array([2., 0.75]),
 
 
 def make(factory, order=SITES, seed=42, writer=None):
-    agg = SchemeA(factory(seed), scale_bits=12, modulus_bits=32, writer=writer)
+    agg = SchemeA(factory(seed), authenticator=InsecureTestAuth(), clip_bound=4., scale_bits=12, modulus_bits=32, writer=writer)
     agg.setup(order)
     return agg
 
@@ -94,7 +95,7 @@ def test_logs_contain_no_secrets(tmp_path, fake_kem_factory, monkeypatch):
     agg.aggregate_round(0, UPDATES)
     text = path.read_text()
     rows = [json.loads(line) for line in text.splitlines()]
-    assert len(rows) == 24
+    assert len(rows) == 29
     required = {"run_id", "config_hash", "scheme", "dp_level", "run_seed", "schema_version", "round", "phase", "site", "epoch",
                 "duration_s", "bytes_sent", "bytes_received", "peak_mem_gpu_mb",
                 "peak_mem_host_mb", "timestamp", "library_versions"}

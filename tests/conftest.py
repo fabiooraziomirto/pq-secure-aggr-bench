@@ -1,6 +1,7 @@
 """INSECURE test double, deliberately outside the installable package."""
 import random
 import pytest
+from pqfl.auth import AuthProof
 
 
 class FakeKEM:
@@ -53,3 +54,13 @@ def pytest_sessionfinish(session, exitstatus):
         selected = any(item.get_closest_marker("requires_oqs") for item in session.items)
         if not selected or getattr(session.config, "_pqfl_real_skipped", False):
             session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+class InsecureTestAuth:
+    """INSECURE authentication bypass, confined to non-authentication unit tests."""
+
+    def issue(self, site_id, epoch, public_key):
+        return AuthProof()
+
+    def verify(self, verifier, site_id, epoch, public_key, proof):
+        pass

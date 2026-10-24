@@ -34,6 +34,10 @@
 | 2026-10-24 | D: binding liboqs-python 0.16.0.1 e liboqs 0.16.0 candidata | Binding installato, build nativa ferma per CMake assente; nessuna nuova dipendenza oltre al binding | Bloccata sul runtime attuale |
 | 2026-10-24 | D: requires_oqs e make test-real senza skip ammessi | Evitare che test reali non eseguiti producano un esito di readiness | Adottata |
 | 2026-10-24 | D: env opzionale nel setup, schema_version resta 2 | Metadati pubblici identici al collector check_env.py | Adottata |
+| 2026-10-24 | E: pinning per verificatore ed epoca, default fail-closed | Nessuna fiducia automatica; provider esplicito di coppie KEM pre-provisionate per il pinning | Adottata |
+| 2026-10-24 | E: MLDSAAuth su ML-DSA-65 con identità pinnate | Firma legata a dominio, epoca, proprietario e chiave KEM; nativa non disponibile qui | Implementata, test reali bloccati |
+| 2026-10-24 | E: clip_bound obbligatorio e all_or_abort | Limite verificato appena noto n; no output parziale o recovery | Adottata |
+| 2026-10-24 | E: fase auth aggiunta, schema_version resta 2 | Separare i costi di autenticazione dai costi KEM con conteggio dei messaggi concreti | Adottata |
 
 ### D: comandi eseguiti e provenienza
 

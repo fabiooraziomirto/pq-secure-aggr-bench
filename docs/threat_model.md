@@ -5,6 +5,19 @@ record e credenziali restano nei rispettivi siti. Anche gli aggiornamenti e gli
 aggregati possono contenere informazioni sensibili: l'aggregazione sicura non
 costituisce da sola una garanzia contro membership inference o estrazione.
 
+## Assunzioni
+
+Le chiavi sono autenticate tramite Authenticator con trust anchor fuori banda:
+fingerprint per verificatore/epoca oppure identità ML-DSA-65 pinnate. Il default
+vuoto rifiuta la chiave, senza trust-on-first-use. La conferma HMAC resta distinta
+dall’autenticazione. Identità a lungo termine e chiavi pre-provisionate devono
+essere custodite e distribuite in modo sicuro. Nessun dropout: all_or_abort,
+nessuna ricostruzione di seed e nessun output parziale.
+Il canale non è necessario per la confidenzialità dei vettori mascherati sotto
+le assunzioni su KEM/maschere, ma è necessario per l’integrità dei messaggi:
+le firme sulle chiavi non autenticano automaticamente ciphertext, aggiornamenti,
+ordine dei round o risultato. Il simulatore non implementa tale canale.
+
 ## Livello esterno: harvest now, decrypt later
 
 Un avversario registra oggi il traffico e dispone in futuro di capacità
@@ -14,7 +27,8 @@ ancora essere revisionati e verificati. HybridKEM implementa un combiner
 sperimentale con transcript binding, non un canale autenticato; HybridChannel
 resta uno stub. TODO: revisione da parte di un esperto.
 Non si rivendica sicurezza post-quantum dell'implementazione corrente.
-La scelta delle firme/autenticazione e delle ancore di fiducia resta TODO.
+MLDSAAuth implementa l’autenticazione della chiave KEM con ML-DSA-65;
+restano aperti provisioning, rotazione delle identità e canale autenticato.
 Si assume esplicitamente che le chiavi pubbliche dei siti siano autentiche:
 un reducer che le inoltra potrebbe altrimenti sostituirle. La conferma HMAC
 prova il possesso di un segreto condiviso legato alla trascrizione, non

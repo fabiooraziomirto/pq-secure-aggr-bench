@@ -37,7 +37,7 @@ round è ammesso finché un nuovo rekey non termina con successo.
 
 ## Schema A
 
-`SchemeA(kem, scale_bits=..., modulus_bits=..., writer=None, clip_bound=None)` richiede entrambi
+`SchemeA(kem, scale_bits=..., modulus_bits=..., clip_bound=..., writer=None, authenticator=None, key_provider=None)` richiede entrambi
 i parametri senza default: `0 <= scale_bits < modulus_bits <= 62`.
 Quantizzazione: arrotondamento al più vicino con pareggi al pari, passo
 `2**(-scale_bits)`, errore individuale al massimo mezzo passo. Ogni aggiornamento
@@ -46,12 +46,12 @@ interpretare correttamente la dequantizzazione. Il simulatore controlla la somma
 [-2^(modulus_bits−1), 2^(modulus_bits−1)−1] solleva `AggregateOverflowError`.
 È possibile soltanto perché conosce gli input: un reducer reale non può farlo.
 In produzione serve un `clip_bound` verificato per sito, non la fiducia nel reducer.
-Il parametro opzionale non applica clipping: rifiuta coordinate con |x| oltre il
+Il parametro obbligatorio keyword-only, senza default e mai None, non applica clipping: rifiuta coordinate con |x| oltre il
 limite. Il costruttore verifica finitezza, non negatività e sicurezza per almeno
 2 siti; `setup` verifica n × clip_bound × 2^scale_bits < 2^(modulus_bits−1),
 quando n è noto, prima di generare chiavi. Si verifica anche il limite conservativo
 n × round-to-even(clip_bound × 2^scale_bits), includendo l’arrotondamento.
-`clip_bound=None` lascia solo il controllo esatto del simulatore. Un round iniziato
+Il controllo esatto resta una difesa aggiuntiva, non un’alternativa al limite. Un round iniziato
 consuma l’indice anche in caso di errore: non riutilizzarlo.
 
 Ogni coppia ordinata lessicograficamente esegue una KEM in setup e a ogni rekey.
@@ -86,7 +86,10 @@ from pqfl.kem import HybridKEM
 # scale_bits, modulus_bits = reviewed_configuration  # TODO
 writer = JSONLWriter.from_config("run.jsonl", "configs/experiment.yaml")
 # Set run_seed and other public metadata in the YAML before running.
-# agg = SchemeA(kem, scale_bits=scale_bits, modulus_bits=modulus_bits, writer=writer)
+# auth = configured_authenticator  # TODO: externally provisioned trust
+# clip_bound = reviewed_clip_bound  # TODO
+# agg = SchemeA(kem, scale_bits=scale_bits, modulus_bits=modulus_bits,
+#               clip_bound=clip_bound, authenticator=auth, writer=writer)
 # agg.setup(["A", "B", "C"])
 # result = agg.aggregate_round(0, {s: np.zeros(4) for s in ["A", "B", "C"]})
 ```
@@ -100,7 +103,7 @@ nessun parametro seed deterministico è previsto per KEM reali.
 Un file nuovo per esecuzione; `JSONLWriter` rifiuta un file esistente.
 Usare `Metrics([*site_ids, "reducer"], writer, epoch=0)` e
 `with metrics.phase_timer("crypto", site="A"):`;
-le altre fasi sono `compute` e `comm`. Assegnare `metrics.round_idx` e usare
+le altre fasi sono `auth`, `compute` e `comm`. Assegnare `metrics.round_idx` e usare
 `metrics.counter.transfer(sender, receiver, nbytes)` per messaggi tra siti.
 Ogni riga riporta il DELTA dei byte dall’ultima riga scritta dalla stessa
 istanza Metrics (inizialmente zero per ogni attore). Le righe sono sommabili
@@ -218,3 +221,39 @@ ct totale **1149 byte**. Questi numeri sono stati verificati sul serializer con
 componenti delle dimensioni standard (pk PQ 1184, ct PQ 1088, X25519 32), non
 con un backend nativo funzionante. I test reali controllano le stesse dimensioni
 oltre al segreto di 32 byte e al round trip. Non sono misure di prestazioni.
+
+## Autenticazione e partecipazione (E)
+
+`Authenticator.issue(owner, epoch, public_key)` produce `AuthProof`;
+`verify(verifier, owner, epoch, public_key, proof)` accetta oppure solleva
+`AuthenticationError`. Ogni verificatore possiede il proprio registro fuori
+banda. Default `PinnedFingerprintAuth()` vuoto: fallisce senza pin, non effettua
+trust-on-first-use e non deriva alcun seed dopo una chiave non autentica.
+`PinnedFingerprintAuth.from_config` legge la mappa pubblica
+verifier → epoch → owner → fingerprint SHA256 esadecimale. Per pinnare chiavi
+KEM effimere prima dello scambio, il chiamante passa `key_provider(owner, epoch)`
+con coppie pre-provisionate e pin verificati fuori banda. Il provider deve
+fornire nuove chiavi per il rekey; non usare lo stesso collegamento non
+attendibile per procurarsi sia chiave sia fingerprint.
+
+`MLDSAAuth` usa solo ML-DSA-65 abilitata nel backend reale, nessun fallback.
+Le identità a lungo termine e i relativi registri di chiavi pubbliche pinnate
+sono iniettati dal chiamante; le chiavi segrete non appartengono al YAML.
+Il messaggio firmato è JSON ASCII compatto della lista
+`["pqfl/auth/v1", epoch, site_id, public_key.hex()]`.
+Cambiare epoca, proprietario o chiave invalida la firma. Le dimensioni di firma
+e identità sono lette da oqs; il test richiede firma di 3309 byte ma la misura
+reale resta non verificata su questa macchina senza liboqs nativa.
+
+La fase aggiuntiva `auth` rende visibili firma e verifica separate da KEM/HMAC.
+Si firma una volta per proprietario/epoca, poi si inviano chiave KEM, chiave
+identità e firma a ciascun destinatario interessato; si contano i len effettivi
+con lo stesso counter.transfer, senza ricontare la chiave KEM nella fase crypto.
+Il pinning non introduce firme o chiavi di identità sul wire. Nessuna firma o
+chiave viene salvata nei log. Schema_version resta **2**: estensione documentata
+dell’insieme phase, non cambio di struttura dei campi obbligatori.
+
+`participation_policy="all_or_abort"`: sito mancante o inatteso solleva
+`MissingParticipantError`, sottoclasse di ValueError, prima di produrre output
+parziale o consumare il round. Nessun recovery è implementato. Anche B e C devono
+esporre `participation_policy` con lo stesso nome e dichiararne il comportamento.

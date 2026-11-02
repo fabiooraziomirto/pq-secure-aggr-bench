@@ -279,11 +279,13 @@ def pilot_run(model_path: str, rows_path: str, validation_path: str, holdout_pat
               delta: float = 1e-5, rounds: int = 10, lr: float = 2e-4, seed: int = 0, micro_batch: int = 4,
               logical_batch: int = 32, clip: float | None = None, clamp_bound: float | None = None,
               eval_validation: int = 500, eval_holdout: int = 300, max_len: int = 512,
-              oqs_path: str | None = None, secret_randomness: bool = False, save_updates: bool = False) -> dict:
+              oqs_path: str | None = None, secret_randomness: bool = False, save_updates: bool = False,
+              rekey_every: int | None = None) -> dict:
     """One full configuration: three sites, `rounds` federated rounds with the given aggregation scheme and
     (optionally) example-level DP-SGD at the given epsilon, per-round quick evaluation, final scoring.
     secret_randomness draws the DP noise and batches from os.urandom (not reproducible, see dpsgd).
-    save_updates writes the per-site updates of every round to out_dir/updates (sensitive, see run_federated)."""
+    save_updates writes the per-site updates of every round to out_dir/updates (sensitive, see run_federated).
+    rekey_every = k starts a new key epoch every k rounds (secure schemes only; default: one epoch per session)."""
     if epsilon is not None and (clip is None or not clip > 0):
         raise ValueError("A DP run (epsilon set) needs a positive clipping norm `clip`")
     if epsilon is not None and scheme == "Z":
@@ -323,6 +325,8 @@ def pilot_run(model_path: str, rows_path: str, validation_path: str, holdout_pat
     config = dict(scheme=scheme, epsilon=epsilon, delta=delta, rounds=rounds, lr=lr, seed=seed, micro_batch=micro_batch,
                   logical_batch=logical_batch, clip=clip, clamp_bound=clamp_bound, items_per_site=items_per_site,
                   sites=sites, secret_randomness=secret_randomness)
+    if rekey_every is not None:          # recorded only when set, so earlier runs keep their configuration
+        config.update(rekey_every=rekey_every)
     if epsilon is None:
         train_function, kwargs = train_local, dict(common, accumulation=logical_batch // micro_batch)
     else:
@@ -348,7 +352,7 @@ def pilot_run(model_path: str, rows_path: str, validation_path: str, holdout_pat
         from pqfl.train.aggregation import build_training_aggregator
         aggregator = build_training_aggregator(scheme, sites, clip_bound=clamp_bound, out_dir=out_dir, seed=seed,
                                                dp_level="none" if epsilon is None else f"eps{epsilon:g}",
-                                               run_id=os.path.basename(out_dir.rstrip("/")))
+                                               run_id=os.path.basename(out_dir.rstrip("/")), rekey_every=rekey_every)
     json.dump(config, open(os.path.join(out_dir, "config.json"), "w"), indent=1)
     validation, holdout = _rows(validation_path)[:eval_validation], _rows(holdout_path)
     holdout = [r for r, dup in zip(holdout, duplicates_of(holdout, list(rows.values()))) if not dup][:eval_holdout]
@@ -367,7 +371,8 @@ def pilot_run(model_path: str, rows_path: str, validation_path: str, holdout_pat
     out = run_federated(model, tokenizer, site_items, aggregator, rounds=rounds, train_kwargs=kwargs, seed=seed,
                         checkpoint_dir=os.path.join(out_dir, "checkpoints"), clamp_bound=clamp_bound,
                         evaluate=quick_evaluation, log=print, train_function=train_function, config=config,
-                        updates_dir=os.path.join(out_dir, "updates") if save_updates else None)
+                        updates_dir=os.path.join(out_dir, "updates") if save_updates else None,
+                        rekey_every=rekey_every)
     train_seconds = time.time() - started
     train_peak_gb = torch.cuda.max_memory_allocated() / 2 ** 30
     del model

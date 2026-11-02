@@ -144,6 +144,42 @@ def test_site_updates_are_saved_with_the_global_vector_they_start_from(tmp_path)
     np.testing.assert_allclose(out["vector"].numpy(), final, atol=1e-6)
 
 
+class Rekeying(Sum):
+    """Sum with the rekey contract of the real aggregators: a new key epoch on each call."""
+    def __init__(self, sites):
+        super().__init__(sites)
+        self.epoch, self.rekeyed_before = 0, []
+
+    def rekey(self):
+        self.epoch += 1
+        self.rekeyed_before.append(len(self.rounds))
+
+
+def test_rekey_every_k_rounds_starts_a_new_key_epoch(tmp_path):
+    aggregator = Rekeying(sorted(SITES))
+    out = run_federated(Tiny(), CharTokenizer(), SITES, aggregator, rounds=5, train_kwargs=KW, seed=3,
+                        checkpoint_dir=str(tmp_path), log=lambda m: None, rekey_every=2)
+    assert aggregator.rekeyed_before == [2, 4]
+    assert [h["epoch"] for h in out["history"]] == [0, 0, 1, 1, 2]
+
+
+def test_a_resumed_session_is_fresh_and_rekeys_only_at_later_multiples(tmp_path):
+    run_federated(Tiny(), CharTokenizer(), SITES, Rekeying(sorted(SITES)), rounds=2, train_kwargs=KW, seed=3,
+                  checkpoint_dir=str(tmp_path), log=lambda m: None, rekey_every=2)
+    resumed = Rekeying(sorted(SITES))
+    run_federated(Tiny(), CharTokenizer(), SITES, resumed, rounds=5, train_kwargs=KW, seed=3,
+                  checkpoint_dir=str(tmp_path), log=lambda m: None, rekey_every=2)
+    # round 2 opens a fresh session (new keys already); the only rekey is before round 4, after 2 local rounds
+    assert resumed.rounds == [2, 3, 4] and resumed.rekeyed_before == [2]
+
+
+def test_invalid_rekey_settings_are_refused(tmp_path):
+    with pytest.raises(ValueError, match="positive integer"):
+        go(tmp_path, 1, rekey_every=0)
+    with pytest.raises(ValueError, match="rekey"):
+        go(tmp_path, 1, rekey_every=2)                                     # Sum has no rekey()
+
+
 def test_without_updates_dir_nothing_but_checkpoints_is_written(tmp_path):
     go(tmp_path, 1)
     assert os.listdir(tmp_path) == ["round-0000.pt"]

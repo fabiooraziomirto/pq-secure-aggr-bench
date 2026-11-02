@@ -14,11 +14,14 @@ from pqfl.runner import build_aggregator
 
 
 def build_training_aggregator(scheme: str, sites: list[str], *, clip_bound: float, out_dir: str, seed: int,
-                              dp_level: str = "none", run_id: str = "train", ring_dim: int = 16384):
-    """Aggregator already set up for `sites`, logging phase timers and byte deltas to out_dir/aggregation*.jsonl."""
+                              dp_level: str = "none", run_id: str = "train", ring_dim: int = 16384,
+                              rekey_every: int | None = None):
+    """Aggregator already set up for `sites`, logging phase timers and byte deltas to out_dir/aggregation*.jsonl.
+    `rekey_every` is only recorded in runconfig.yaml: the training loop performs the rekeys."""
     os.makedirs(out_dir, exist_ok=True)
     config = dict(run_id=run_id, sites=list(sites), clip_bound=float(clip_bound), scale_bits=24, modulus_bits=40,
-                  ring_dim=ring_dim, scaling_mod_size=50, dp_level=dp_level, run_seed=seed, rekey_every_rounds=None,
+                  ring_dim=ring_dim, scaling_mod_size=50, dp_level=dp_level, run_seed=seed,
+                  rekey_every_rounds=rekey_every,
                   auth={"method": "mldsa_ephemeral_simulation"}, bgv_scale_bits=20, bgv_plaintext_bits=31)
     path = os.path.join(out_dir, "runconfig.yaml")
     with open(path, "w", encoding="utf-8") as handle:

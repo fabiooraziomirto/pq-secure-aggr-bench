@@ -49,11 +49,19 @@ def _save_updates(directory, round_idx, global_before, deltas):
 
 def run_federated(model, tokenizer, site_items: dict, aggregator, *, rounds: int, train_kwargs: dict, seed: int,
                   checkpoint_dir: str, clamp_bound: float | None = None, evaluate=None, log=print,
-                  train_function=train_local, config: dict | None = None, updates_dir: str | None = None) -> dict:
+                  train_function=train_local, config: dict | None = None, updates_dir: str | None = None,
+                  rekey_every: int | None = None) -> dict:
     """Run (or resume) `rounds` federated rounds; returns {"history": [...], "vector": final global vector}.
     `train_kwargs` go to `train_function`: train_local (epochs, micro_batch, accumulation, lr, max_len, eos_id,
     pad_id) or pqfl.train.dpsgd.train_local_dp (DP-SGD, same notion of seed). With `updates_dir`, every round
-    also saves the per-site updates (sensitive: they may allow reconstructing training text)."""
+    also saves the per-site updates (sensitive: they may allow reconstructing training text). With
+    `rekey_every` = k, the aggregator starts a new key epoch before every round that is a multiple of k, as in
+    the cost runner; without it the whole session is one epoch. A resumed session starts with fresh keys."""
+    if rekey_every is not None:
+        if isinstance(rekey_every, bool) or not isinstance(rekey_every, int) or rekey_every <= 0:
+            raise ValueError("rekey_every must be None or a positive integer")
+        if not callable(getattr(aggregator, "rekey", None)):
+            raise ValueError("rekey_every needs an aggregator with rekey()")
     sites = sorted(site_items)
     expected = getattr(aggregator, "sites", None)
     if expected is not None and sorted(expected) != sites:
@@ -71,8 +79,10 @@ def run_federated(model, tokenizer, site_items: dict, aggregator, *, rounds: int
         log(f"resumed after round {state['round']}")
     for round_idx in range(start, rounds):
         started = time.time()
+        if rekey_every and round_idx > start and round_idx % rekey_every == 0:
+            aggregator.rekey()
         global_vector = flatten(model)
-        deltas, record = {}, {"round": round_idx, "sites": {}}
+        deltas, record = {}, {"round": round_idx, "epoch": getattr(aggregator, "epoch", None), "sites": {}}
         clamped = []
         for index, site in enumerate(sites):
             load_flat(model, global_vector)

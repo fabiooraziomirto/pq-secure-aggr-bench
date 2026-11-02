@@ -124,8 +124,24 @@ def test_secure_scheme_a_sums_the_integer_shares_exactly(tmp_path, fake_kem_fact
     assert aggregator.check
 
 
+def test_sigma_zero_is_the_noise_free_reference_with_identical_batches(tmp_path):
+    """sigma = 0 adds no noise (a non-private reference run); same public seed gives the same batches, so the
+    difference to a noisy run is exactly the added noise."""
+    _, free = go(tmp_path / "free", 1, sigma=0.0, updates_dir=str(tmp_path / "uf"))
+    _, noisy = go(tmp_path / "noisy", 1, sigma=0.5, updates_dir=str(tmp_path / "un"))
+    assert free["share_sigma"] == 0.0 and free["aggregate_sigma"] == 0.0
+    a, b = np.load(tmp_path / "uf" / "round-0000.npz"), np.load(tmp_path / "un" / "round-0000.npz")
+    scale, clip = 2.0 ** 16, KW["clip"]
+    for site in SITES:
+        exact, with_noise = a[f"update:{site}"], b[f"update:{site}"]
+        assert np.array_equal(exact * scale, np.rint(exact * scale))            # integers on the 2^-16 grid
+        noise = (with_noise - exact)                                            # gradient units
+        assert noise.var() == pytest.approx((clip * 0.5 / math.sqrt(3)) ** 2, rel=0.1)
+    assert free["history"][0]["sites"]["a"]["examples"] == noisy["history"][0]["sites"]["a"]["examples"]
+
+
 def test_invalid_settings_are_refused(tmp_path):
-    for bad in (dict(tolerated=3), dict(sigma=0.0), dict(sampling_rate=0.0), dict(sampling_rate=1.5),
+    for bad in (dict(tolerated=3), dict(sigma=-0.1), dict(sampling_rate=0.0), dict(sampling_rate=1.5),
                 dict(scale_bits=0), dict(server_optimizer="lion")):
         with pytest.raises(ValueError):
             go(tmp_path, 1, **bad)

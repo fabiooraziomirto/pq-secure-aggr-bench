@@ -102,7 +102,12 @@ def run_dp_fedsgd(model, tokenizer, site_items: dict, aggregator, *, steps: int,
     Returns {"history", "vector", "share_sigma", "aggregate_sigma"}. With updates_dir, every save_every steps the
     per-site released vectors (integer / 2^scale_bits) are saved: what an adversary reads once the masks fall."""
     sites = sorted(site_items)
-    share_sigma, aggregate_sigma = noise_shares(sigma, sites=len(sites), tolerated=tolerated)
+    if sigma == 0:       # non-private reference run: no noise (same batches as the noisy runs for the same seed)
+        if type(tolerated) is not int or not 0 <= tolerated < len(sites):
+            raise ValueError("Require 0 <= tolerated < sites")
+        share_sigma = aggregate_sigma = 0.0
+    else:
+        share_sigma, aggregate_sigma = noise_shares(sigma, sites=len(sites), tolerated=tolerated)
     if not 0 < sampling_rate <= 1 or type(scale_bits) is not int or not 1 <= scale_bits <= 30 or not clip > 0:
         raise ValueError("Require 0 < sampling_rate <= 1, 1 <= scale_bits <= 30 and a positive clip")
     if server_optimizer not in OPTIMIZERS:
@@ -151,7 +156,8 @@ def run_dp_fedsgd(model, tokenizer, site_items: dict, aggregator, *, steps: int,
             batch = np.flatnonzero(batch_rng.random(len(encoded[site])) < sampling_rate).tolist()
             total, stats = site_integer_sum(model, encoded[site], batch, clip=clip, scale=scale,
                                             micro_batch=micro_batch, pad_id=pad_id)
-            total += skellam_noise(total.size, share_variance, noise_rng)
+            if share_variance > 0:
+                total += skellam_noise(total.size, share_variance, noise_rng)
             released[site] = total.astype(np.float64) / scale        # exact: |total| << 2^53
             record["sites"][site] = dict(stats, max_abs=float(np.abs(released[site]).max()))
         aggregated = np.asarray(aggregator.aggregate_round(step, released), dtype=np.float64)

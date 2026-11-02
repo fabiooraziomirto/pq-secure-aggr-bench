@@ -8,7 +8,7 @@ logical_batch: 32
 clamp_bound: 0.02
 clip: 4.0
 delta: 1.0e-5
-secret_randomness: TODO    # as in final_campaign.yaml
+secret_randomness: false   # as in final_campaign.yaml (decided 2026-11-02)
 seeds: [1, 2, 3]
 dp_levels: {none: null, eps8: 8.0}
 configs:

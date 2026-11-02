@@ -19,6 +19,8 @@ class RoundStats:
     bytes_sent: dict[str, int] = field(default_factory=dict)
     bytes_received: dict[str, int] = field(default_factory=dict)
     transfers: list[Transfer] = field(default_factory=list)
+    # Causal stage of each transfer; transfers sharing a stage may run concurrently.
+    stages: list[int] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,7 @@ class HandshakeSummary:
 class ByteCounter:
     def __init__(self, site_ids):
         self.value = RoundStats(dict.fromkeys(site_ids, 0), dict.fromkeys(site_ids, 0))
+        self.stage = 0  # Set by protocols before each group of concurrent sends.
 
     def transfer(self, sender: str, receiver: str, size: int):
         if type(size) is not int or size < 0:
@@ -57,6 +60,7 @@ class ByteCounter:
         if sender == receiver:
             raise ValueError("Self-transfers are not protocol messages")
         self.value.transfers.append(Transfer(sender, receiver, size))
+        self.value.stages.append(self.stage)
         self.value.bytes_sent[sender] += size
         self.value.bytes_received[receiver] += size
 

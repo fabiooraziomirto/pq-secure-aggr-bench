@@ -9,15 +9,15 @@ from pqfl.logging.metrics import Metrics, RoundStats
 from pqfl.masking.core import Tensor
 
 
-def _serialize_plain(values: Tensor) -> bytes:
-    return np.asarray(values, dtype='<f8').tobytes(order='C')
+def _serialize_plain(values: Tensor, dtype: str = '<f8') -> bytes:
+    return np.asarray(values, dtype=dtype).tobytes(order='C')
 
 
-def _deserialize_plain(message: bytes, shape: tuple[int, ...]) -> Tensor:
-    values = np.frombuffer(message, dtype='<f8')
+def _deserialize_plain(message: bytes, shape: tuple[int, ...], dtype: str = '<f8') -> Tensor:
+    values = np.frombuffer(message, dtype=dtype)
     if values.size != int(np.prod(shape)):
         raise ValueError('Unexpected plaintext stub payload length')
-    return values.reshape(shape).copy()
+    return values.reshape(shape).astype(np.float64)
 
 
 class InsecureSumStub(Aggregator):
@@ -29,6 +29,7 @@ class InsecureSumStub(Aggregator):
     """
 
     security_status = 'INSECURE_STUB'
+    dtype = '<f8'
     participation_policy = 'all_or_abort'
     rekey_policy = 'no_op'
 
@@ -39,6 +40,12 @@ class InsecureSumStub(Aggregator):
         self.communication_edges = {}
         self.used_rounds = set()
         self.epoch = 0
+
+    def _pack(self, values: Tensor) -> bytes:
+        return _serialize_plain(values, self.dtype)
+
+    def _unpack(self, message: bytes, shape: tuple[int, ...]) -> Tensor:
+        return _deserialize_plain(message, shape, self.dtype)
 
     def setup(self, site_ids: list[str]) -> None:
         if self.sites is not None:
@@ -78,20 +85,22 @@ class InsecureSumStub(Aggregator):
         self.metrics = Metrics(self.actors, self.writer, epoch=self.epoch)
         self.metrics.round_idx = round_idx
         messages = {}
+        self.metrics.counter.stage = 0
         for site in self.sites:
             with self.metrics.phase_timer('compute', site=site):
-                payload = _serialize_plain(updates[site])
+                payload = self._pack(updates[site])
                 messages[site] = self.metrics.counter.send(site, 'reducer', payload)
         with self.metrics.phase_timer('compute', site='reducer'):
             result = np.zeros(shape, dtype=np.float64)
             for message in messages.values():
-                result += _deserialize_plain(message, shape)
-            payload = _serialize_plain(result)
+                result += self._unpack(message, shape)
+            payload = self._pack(result)
+            self.metrics.counter.stage = 1
             delivered = {site: self.metrics.counter.send('reducer', site, payload) for site in self.sites}
         result = None
         for site in self.sites:
             with self.metrics.phase_timer('compute', site=site):
-                decoded = _deserialize_plain(delivered[site], shape)
+                decoded = self._unpack(delivered[site], shape)
                 if result is None:
                     result = decoded
         return result

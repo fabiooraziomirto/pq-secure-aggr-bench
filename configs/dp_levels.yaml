@@ -1,0 +1,13 @@
+# Example-level DP-SGD per site; same noise multiplier for every scheme including N.
+# Epsilon targets are proposals: the protocol fixes them with a pilot on one seed.
+# Sigma is not stored: it is calibrated by pqfl.dp.calibrate_sigma from (epsilon, delta,
+# sampling rate = batch / per-site examples, total local steps) once batch size, rounds and
+# the clipping norm are fixed in the pilot.
+delta: 1.0e-5          # below 1 / per-site examples (about 4.5e-4)
+sampling: poisson      # accounting assumes Poisson sampling; fixed shuffled batches approximate it
+levels:
+  none: null
+  dp-1:
+    epsilon: 8.0
+  dp-2:
+    epsilon: 2.0

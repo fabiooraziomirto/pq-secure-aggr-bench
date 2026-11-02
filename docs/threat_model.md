@@ -80,7 +80,27 @@ estrazione saranno moduli separati dei colleghi, non eseguiti in questa base.
 Nei log è ammesso solo `run_seed`, seed pubblico di riproducibilità. Non conservare
 chiavi, seed crittografici, segreti condivisi, ciphertext, maschere o tag di conferma nei log; nessun dato clinico nei test.
 
-Gli attuali core B e C sono INSECURE_STUB e rivelano gli aggiornamenti al reducer:
-nessuna garanzia CKKS/MPC sopra descritta si applica a questi stub. La loro policy
+Collusione per lo schema C (secret sharing additivo, n siti più reducer onesto-ma-curioso):
+il reducer vede solo somme parziali, ciascuna uniforme se almeno una share
+ignota la maschera. Reducer più fino a n-2 siti apprendono soltanto ciò che
+l'aggregato già rivela; reducer più n-1 siti espongono l'update del sito restante,
+inevitabile per una somma. Le share viaggiano sigillate con chiavi derivate dal
+KEM ibrido; il canale eredita i limiti di A (combiner sperimentale, nessun framing).
+Ambiente di test: container o VM sullo stesso host condividono hardware e, per i
+container, il kernel; i risultati sono costi di benchmark, non prova di isolamento.
+
+Schema B (CKKS a soglia n-di-n, semi-honest): il reducer vede ciphertext, la somma
+cifrata, le decifrature parziali e il risultato. Con chiave congiunta, un
+sottoinsieme di siti più il reducer non decifra i singoli update. Limite aperto,
+da portare a revisione esperta: le decifrature parziali non hanno noise flooding
+(la modalità NOISE_FLOODING_DECRYPT di OpenFHE non ha mostrato rumore aggiunto nella
+decifratura multiparty), e CKKS ha problemi noti di sicurezza IND-CPA-D. Nessun
+dropout: serve la partecipazione di tutti i siti.
+B-BGV: stesso modello semi-honest n-di-n, ma con noise flooding multiparty di OpenFHE
+attivo (verificato dall'aumento del modulo del ciphertext) e somma esatta, senza il
+limite CKKS delle decifrature parziali senza flooding. Resta da validare da un esperto
+che il flooding sia sufficiente per le garanzie dichiarate (statisticalSecurity e
+numAdversarialQueries non sono configurabili da Python per BGV multiparty).
+Il baseline `InsecureSumStub` rivela gli aggiornamenti al reducer e non è uno schema. La loro policy
 all_or_abort è una scelta funzionale provvisoria; i colleghi dovranno dichiarare
 policy e garanzie dei core reali prima di un confronto scientifico.

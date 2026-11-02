@@ -1,0 +1,45 @@
+# Reduced campaign aligned with the experimental protocol (three sites, real adapter sizes).
+# Sizes: 100000 and 1000000 for scaling of the cost model; 3407872 = rank 8 on q,v of a
+# 32-layer 8B Llama-style model (to be recomputed once the base model is chosen);
+# 20971520 = rank 8 on all linear modules.
+policy:
+  repetitions: 30
+  warmup: 3
+  min_repetitions: 3        # heavy cells shrink to fit the budget, never below this
+  cell_budget_s: 1200       # estimated seconds per compute or network cell
+  net_cap_s: 3600           # skip a network cell only if even min_repetitions exceed this
+percentiles: [50, 95, 99]
+groups:
+  # Protocol H1/H2: three sites, real adapter sizes, primary WAN plus LAN for the compute-only share.
+  - name: main
+    schemes: [N, A, B, B-BGV, C]
+    sites: [3]
+    vector_sizes: [100000, 1000000, 3407872, 20971520]
+    profiles: [lan, wan]
+    skip: ["B:3:20971520", "B-BGV:3:20971520"]   # ~2.4 GB of ciphertext per site: extrapolated
+  # Network sensitivity at the primary adapter size: replays the ledgers of `main`, no new compute.
+  # The 20 Mbit/s `constrained` profile is left out (hours for B and B-BGV; not required by the protocol).
+  - name: sensitivity
+    compute: false
+    ledger_from: main
+    schemes: [N, A, B, B-BGV, C]
+    sites: [3]
+    vector_sizes: [3407872]
+    profiles: [metro]
+  # Scalability supplement (the protocol fixes three sites): compute and bytes only, no replay.
+  - name: scaling
+    schemes: [N, A, B, B-BGV, C]
+    sites: [5, 10, 20]
+    vector_sizes: [100000]
+  # Protocol H6, numerator: a new handshake every round versus every K=10 rounds (compute only;
+  # the network share of a handshake is the replay of the setup ledger in the main group).
+  - name: handshake-every-1
+    schemes: [A, B, B-BGV, C]
+    sites: [3]
+    vector_sizes: [100000]
+    rekey_every_rounds: 1
+  - name: handshake-every-10
+    schemes: [A, B, B-BGV, C]
+    sites: [3]
+    vector_sizes: [100000]
+    rekey_every_rounds: 10

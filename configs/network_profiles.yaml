@@ -1,0 +1,20 @@
+# Emulated egress profiles applied on every container; one-way delay is rtt_ms / 2.
+# Parameters are plausible cross-silo assumptions, not measurements: state them
+# as an emulation in the paper. `lan` applies no emulation (cost of compute only).
+profiles:
+  lan:
+    rtt_ms: 0
+    rate_mbit: null
+    loss_pct: 0
+  metro:
+    rtt_ms: 10
+    rate_mbit: 1000
+    loss_pct: 0
+  wan:
+    rtt_ms: 50
+    rate_mbit: 100
+    loss_pct: 0.1
+  constrained:
+    rtt_ms: 100
+    rate_mbit: 20
+    loss_pct: 0.5

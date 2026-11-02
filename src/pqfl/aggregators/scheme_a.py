@@ -107,6 +107,7 @@ class SchemeA(Aggregator):
             public, secret = keys[right]
             with self.metrics.phase_timer("auth", site=left):
                 proof = proofs[right]
+                self.metrics.counter.stage = 0
                 public = self.metrics.counter.send(right, left, public)
                 identity = (self.metrics.counter.send(right, left, proof.identity_public)
                             if proof.identity_public else b"")
@@ -116,6 +117,7 @@ class SchemeA(Aggregator):
                 self.authenticator.verify(left, right, self.epoch, public, received_proof)
             with self.metrics.phase_timer("crypto", site=left):
                 ciphertext, seed = self.kem.encaps(public)
+                self.metrics.counter.stage = 1
                 ciphertext = self.metrics.counter.send(left, right, ciphertext)
                 left_key = confirmation.confirmation_key(seed, self.epoch, left, right, public, ciphertext)
                 left_tag = confirmation.confirmation_tag(left_key, "left")
@@ -128,6 +130,7 @@ class SchemeA(Aggregator):
                 if not hmac.compare_digest(left_tag, expected_left):
                     raise KeyConfirmationError("Peer key confirmation failed")
                 right_tag = confirmation.confirmation_tag(right_key, "right")
+                self.metrics.counter.stage = 2
                 right_tag = self.metrics.counter.send(right, left, right_tag)
             with self.metrics.phase_timer("crypto", site=left):
                 expected_right = confirmation.confirmation_tag(left_key, "right")
@@ -161,19 +164,22 @@ class SchemeA(Aggregator):
         shape = np.asarray(updates[self.sites[0]]).shape
         if any(np.asarray(u).shape != shape for u in updates.values()):
             raise ValueError("Mismatched tensor shapes")
+        for site in self.sites:
+            values = np.asarray(updates[site], dtype=np.float64)
+            if not np.all(np.isfinite(values)) or np.any(np.abs(values) > self.clip_bound):
+                raise ValueError("Update exceeds clip_bound or is not finite")
         self.used_rounds.add(round_idx)
         self.metrics = Metrics(self.actors, self.writer, epoch=self.epoch)
         self.metrics.round_idx = round_idx
         modulus = 2 ** self.modulus_bits
         messages = {}
+        self.metrics.counter.stage = 0
         # Simulator-only: a real reducer cannot inspect the plaintext sum. Python
         # integers avoid overflow in the safety check even for many participants.
         signed_total = np.zeros(shape, dtype=object)
         for site in self.sites:
             with self.metrics.phase_timer("compute", site=site):
                 values = np.asarray(updates[site], dtype=np.float64)
-                if self.clip_bound is not None and np.any(np.abs(values) > self.clip_bound):
-                    raise ValueError("Update exceeds clip_bound")
                 quantized = quantize(values, self.scale_bits, self.modulus_bits)
                 signed = np.where(quantized >= modulus // 2, quantized - modulus, quantized)
                 signed_total += signed.astype(object)
@@ -188,6 +194,7 @@ class SchemeA(Aggregator):
             for message in messages.values():
                 total = (total + deserialize_masked(message, shape, self.modulus_bits)) % modulus
             result_message = serialize_masked(total, self.modulus_bits)
+            self.metrics.counter.stage = 1
             delivered = {site: self.metrics.counter.send("reducer", site, result_message)
                          for site in self.sites}
         result = None
@@ -197,6 +204,8 @@ class SchemeA(Aggregator):
                 decoded = dequantize(received, self.scale_bits, self.modulus_bits)
                 if result is None:
                     result = decoded
+                elif not np.array_equal(decoded, result):
+                    raise ValueError("Sites decoded different aggregates")
         return result
 
     def stats(self) -> RoundStats:

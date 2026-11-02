@@ -1,0 +1,21 @@
+# T15, session 1: (a) repeat the three WAN cells at d = 1e6 that overlapped our own jobs in campaign 3 (A, B, B-BGV;
+# no perturbation now), (b) heavy WAN cells at d = 3,407,872 in a fresh session, to give between-session uncertainty.
+# Budget per cell 1500 s: B and B-BGV get a few samples per session (3 at 3.4M, 8-10 at 1e6).
+policy:
+  repetitions: 30
+  warmup: 3
+  min_repetitions: 3
+  cell_budget_s: 1500
+  net_cap_s: 7200
+percentiles: [50, 95, 99]
+groups:
+  - name: main
+    schemes: [A, B, B-BGV]
+    sites: [3]
+    vector_sizes: [1000000]
+    profiles: [wan]
+  - name: heavy
+    schemes: [N, A, C, B, B-BGV]
+    sites: [3]
+    vector_sizes: [3407872]
+    profiles: [wan]

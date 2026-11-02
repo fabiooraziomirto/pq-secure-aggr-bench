@@ -4,3 +4,14 @@ __pycache__/
 *.egg-info/
 .venv/
 runs/
+
+# local-only material (manuscript drafts, third-party PDFs, packages, analysis notes, intermediate traces)
+docs/paper/
+docs/rw/
+docs/*.zip
+docs/paper_outline.md
+docs/paper_proposal_supervisors.md
+docs/pilot_assessment.md
+docs/pilot_review*
+docs/pilot_manifest.json
+Protocollo*.md

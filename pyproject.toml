@@ -6,14 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "pqfl"
 version = "0.0.0"
 description = "Research scaffolding for post-quantum secure aggregation"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = ["numpy", "cryptography", "PyYAML"]
 
 [project.optional-dependencies]
 test = ["pytest"]
 real = ["liboqs-python==0.16.0.1"]
+he = ["openfhe==1.6.1.0.22.4"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-markers = ["requires_oqs: requires native liboqs and official Python bindings"]
+markers = ["requires_oqs: requires native liboqs and official Python bindings",
+           "requires_openfhe: requires the official openfhe Python wheel"]

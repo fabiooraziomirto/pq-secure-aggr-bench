@@ -36,6 +36,16 @@ def fake_kem_factory():
     return FakeKEM
 
 
+def pytest_collection_modifyitems(config, items):
+    import importlib.util
+    if importlib.util.find_spec("openfhe") is None:
+        skip = pytest.mark.skip(reason="TODO HE environment: official 'openfhe' wheel missing "
+                                       "(pip install openfhe==1.6.1.0.22.4 in a separate environment)")
+        for item in items:
+            if item.get_closest_marker("requires_openfhe"):
+                item.add_marker(skip)
+
+
 def pytest_addoption(parser):
     parser.addoption("--fail-on-oqs-skip", action="store_true",
                      help="Fail the session if any requires_oqs test is skipped")

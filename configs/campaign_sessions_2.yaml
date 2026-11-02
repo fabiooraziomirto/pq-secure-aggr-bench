@@ -1,0 +1,23 @@
+# T15, session 2: the heavy WAN cells of the HE schemes at d = 3,407,872 again, in an independent later session
+# (N, A and C already have 30 samples per cell; between-session uncertainty matters for B and B-BGV).
+policy:
+  repetitions: 30
+  warmup: 3
+  min_repetitions: 3
+  cell_budget_s: 1500
+  net_cap_s: 7200
+percentiles:
+- 50
+- 95
+- 99
+groups:
+- name: heavy
+  schemes:
+  - B
+  - B-BGV
+  sites:
+  - 3
+  vector_sizes:
+  - 3407872
+  profiles:
+  - wan

@@ -7,8 +7,7 @@ import pytest
 
 from pqfl.aggregators.scheme_a import SchemeA
 from conftest import InsecureTestAuth
-from pqfl.aggregators.scheme_b import SchemeB
-from pqfl.aggregators.scheme_c import SchemeC
+from pqfl.aggregators.insecure_stub import InsecureSumStub
 from pqfl.channel.hybrid import HybridChannel
 from pqfl.kem.backends import OpenSSLKEM
 from pqfl.logging.metrics import ByteCounter, JSONLWriter
@@ -157,7 +156,7 @@ def test_unimplemented_crypto_fails_closed_and_stubs_are_labelled():
     for backend in (OpenSSLKEM,):
         with pytest.raises(NotImplementedError):
             backend()
-    for scheme in (SchemeB(), SchemeC()):
+    for scheme in (InsecureSumStub(),):
         assert scheme.security_status == "INSECURE_STUB"
         scheme.setup(SITES)
         np.testing.assert_array_equal(scheme.aggregate_round(0, UPDATES), sum(UPDATES.values()))

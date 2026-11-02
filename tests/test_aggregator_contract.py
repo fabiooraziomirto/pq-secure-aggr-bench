@@ -8,6 +8,7 @@ import pytest
 
 from conftest import InsecureTestAuth, real_auth_for_sites
 from pqfl.aggregators import AGGREGATOR_REGISTRY
+from pqfl.aggregators.insecure_stub import InsecureSumStub
 from pqfl.aggregators.errors import MissingParticipantError
 from pqfl.kem.backends import BackendUnavailable, LibOQSKEM
 from pqfl.kem.hybrid import HybridKEM
@@ -23,16 +24,21 @@ TOLERANCE = len(SITES) * 0.5 * 2 ** (-12) + np.finfo(float).eps
 @pytest.fixture(params=[
     pytest.param(('A', 'real'), marks=pytest.mark.requires_oqs, id='A-real'),
     pytest.param(('A', 'functional'), id='A-functional-INSECURE'),
-    pytest.param(('B', 'stub'), id='B-INSECURE_STUB'),
-    pytest.param(('C', 'stub'), id='C-INSECURE_STUB'),
+    pytest.param(('B', 'functional'), marks=pytest.mark.requires_openfhe, id='B-functional-INSECURE'),
+    pytest.param(('B-BGV', 'functional'), marks=pytest.mark.requires_openfhe, id='B-BGV-functional-INSECURE'),
+    pytest.param(('STUB', 'baseline'), id='STUB-INSECURE_STUB-baseline'),
+    pytest.param(('C', 'real'), marks=pytest.mark.requires_oqs, id='C-real'),
+    pytest.param(('C', 'functional'), id='C-functional-INSECURE'),
 ])
 def registered(request, fake_kem_factory):
     name, variant = request.param
-    assert set(AGGREGATOR_REGISTRY) == {'A', 'B', 'C'}
-    cls = AGGREGATOR_REGISTRY[name]
+    assert set(AGGREGATOR_REGISTRY) == {'A', 'B', 'B-BGV', 'C', 'A-dropout', 'B-BGV-threshold'}
+    cls = InsecureSumStub if name == 'STUB' else AGGREGATOR_REGISTRY[name]
     def create(writer=None):
-        if name != 'A':
+        if name == 'STUB':
             return cls(writer=writer)
+        if name in {'B', 'B-BGV'}:
+            return cls(clip_bound=1., authenticator=InsecureTestAuth(), writer=writer)
         if variant == 'real':
             auth = real_auth_for_sites(SITES)
             try:
@@ -113,7 +119,7 @@ def test_contract_sum_serialized_transfers_broadcast_and_stats(registered, tmp_p
     assert all(row['phase'] in {'auth', 'crypto', 'compute', 'comm'} for row in rows)
     assert all(row['phase'] != 'comm' and row['schema_version'] == 2 for row in rows)
     assert 'env' in rows[0]
-    if name in {'B', 'C'}:
+    if name == 'STUB':
         assert agg.security_status == 'INSECURE_STUB'
 
 
@@ -142,7 +148,7 @@ def test_contract_rekey_or_declared_noop(registered):
     assert agg.rekey() is None
     assert agg.used_rounds == {0}
     assert_ledger(agg.stats(), agg.actors)
-    if agg.rekey_policy == 'refresh_all_pairs':
+    if agg.rekey_policy in {'refresh_all_pairs', 'refresh_joint_key'}:
         assert agg.epoch == previous_epoch + 1
         observed = {(t.sender, t.receiver) for t in agg.stats().transfers if t.size > 0}
         assert observed == agg.communication_edges['rekey']

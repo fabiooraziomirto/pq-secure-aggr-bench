@@ -1,7 +1,7 @@
 # Aggregazione post-quantum di aggiornamenti LoRA
 
 Base di ricerca per tre siti A, B, C. Nessun dato clinico incluso.
-Licenza: TODO. Versione 0.0.0: segnaposto del pacchetto, non release scientifica.
+Licenza: Apache-2.0 (file `LICENSE`, testo ufficiale non modificato). Versione 0.0.0: segnaposto del pacchetto, non release scientifica.
 
 ## Setup e test
 
@@ -36,15 +36,75 @@ non è un deployment pronto per produzione.
 9. Aggiungi la classe ad AGGREGATOR_REGISTRY e configura il factory dei test.
 10. Esegui la suite di conformità e make test-real per ogni backend nativo.
 
-B e C sono ora INSECURE_STUB: somma in chiaro, nessuna HE/MPC. Il loro traffico
-serializzato non rappresenta costi CKKS/MPC e non può essere usato come risultato
+C implementa secret sharing additivo (`scheme_c.py`, `masking/sharing.py`) sopra il
+setup PQ autenticato di A. B implementa CKKS a soglia n-di-n con OpenFHE
+(`scheme_b.py`, `he/ckks.py`), da installare in un ambiente separato
+(`pip install '.[he]'`, wheel ufficiale openfhe 1.6.1.0.22.4); i test B si saltano
+senza il wheel. `InsecureSumStub` resta solo come baseline etichettata. Il traffico dello stub non rappresenta costi CKKS e non può essere usato come risultato
 del paper. Specifica in [docs/interface.md](docs/interface.md), assunzioni in
 [docs/threat_model.md](docs/threat_model.md) e decisioni in
 [docs/decisions.md](docs/decisions.md).
 
-`configs/experiment.yaml` è un template con TODO, non una configurazione eseguibile.
-Non sono presenti runner di esperimenti. Container Docker e Apptainer sono
-bozze non compilabili finché i TODO non sono risolti; non sono stati costruiti.
+`configs/experiment.yaml` è un template con TODO per gli esperimenti finali LoRA: il
+caricatore lo rifiuta. `configs/sim_costs.yaml` è completo e serve ai run di costo
+del simulatore su aggiornamenti sintetici (nessun modello, dati clinici o DP).
+
+```bash
+# Un ambiente con liboqs-python e openfhe; OQS_INSTALL_PATH/LD_LIBRARY_PATH per liboqs.
+python scripts/run_experiment.py --config configs/sim_costs.yaml --scheme A \
+  --output runs/A.jsonl --rounds 5 --warmup 1 --vector-size 100000   # A, B, C, STUB
+python scripts/summarize_runs.py runs/A.jsonl runs/B.jsonl --percentiles 50 95
+python scripts/bench_scaling.py --config configs/sim_costs.yaml --output-dir runs/scaling \
+  --schemes STUB A C B --sites 3 5 10 --vector-sizes 10000 100000 \
+  --repetitions 5 --warmup 1 --percentiles 50 95
+```
+
+`--output` e `--output-dir` devono essere nuovi (`runs/` è ignorata da git). Rounds,
+warm-up, siti, dimensioni e percentili sono obbligatori e senza default. Ogni cella
+dello sweep è una sessione nuova (setup registrato, warm-up non registrato) con un
+JSONL proprio e una riga di `summary.csv`. Il runner verifica la somma a ogni round.
+I tempi sono somme dei timer del simulatore seriale in-process: `cpu_total_s` su tutti
+gli attori, `site_max_s` per il sito più carico, `reducer_s`; non sono un wall-clock
+distribuito. I byte sono la somma inviata da tutti gli attori per round. Senza
+rete reale né ripetizione tra sessioni/hardware, restano misure del simulatore.
+
+## Misure di rete con i container
+
+Gli schemi restano simulatori in-process; la rete si misura **riproducendo il registro
+dei trasferimenti** (solo mittente, destinatario, dimensione e stadio causale, senza
+payload) tra agenti TCP reali, uno per attore. Payload di zeri: il costo di rete
+dipende solo dalle dimensioni. Il tempo di un trasferimento va dal primo byte
+all'ack di 1 byte del destinatario (include il mezzo RTT di ritorno); il tempo di uno
+stadio è il più lento dei suoi trasferimenti concorrenti; il tempo di round è la somma
+degli stadi. Il calcolo non è incluso: un'end-to-end stimata è `cpu_total_s` del
+simulatore più il tempo di rete, un limite superiore perché il calcolo simulato è seriale.
+
+```bash
+python scripts/run_experiment.py --config configs/sim_costs.yaml --scheme C \
+  --output runs/C.jsonl --rounds 5 --warmup 1 --vector-size 100000 \
+  --ledger-output runs/C-ledger.json
+# agenti: uno per container (container/compose.yaml) oppure python scripts/net_agent.py
+python scripts/net_replay.py --ledger runs/C-ledger.json --profile wan \
+  --repetitions 30 --warmup 3 --output runs/C-wan-net.json \
+  --agents A=site-a:9000 B=site-b:9000 C=site-c:9000 reducer=reducer:9000
+```
+
+`net_replay.py` fallisce se i byte ricevuti dagli agenti non coincidono con il registro.
+Profili in `configs/network_profiles.yaml` (`lan`, `metro`, `wan`, `constrained`):
+`scripts/netem_commands.py` stampa i comandi `tc` (non li esegue); l'entrypoint
+del container li applica con NET_ADMIN. I parametri sono ipotesi plausibili, da
+dichiarare come emulazione. `container/Dockerfile`, `entrypoint.sh` e `compose.yaml`
+(CPU, ubuntu:22.04, liboqs al commit verificato, OpenFHE e liboqs-python con versione
+fissata, `cpuset` per container); il lockfile con hash resta da generare.
+`container/pqfl.def` (Apptainer) resta una bozza non usata.
+
+Immagine costruita e compose provato il 2026-10-30 (digest, versioni effettive e
+verifica di `tc` in `docs/decisions.md`). Imposta `CPUSET_A`, `CPUSET_B`, `CPUSET_C`,
+`CPUSET_REDUCER` con core esistenti sull'host prima di `docker compose up`.
+Attenzione: sui trasferimenti da centinaia di KB con RTT alti il tempo dipende da slow
+start e congestion control di TCP, e ha mostrato variabilità tra sessioni; nella
+campagna finale registra `tcp_congestion_control`, `tcp_slow_start_after_idle` e ripeti le
+sessioni.
 `scripts/check_env.sh` va eseguito sul cluster: controlla OpenSSL/ML-KEM,
 liboqs e tc; non certifica sicurezza, interoperabilità o permessi di rete.
 
@@ -181,9 +241,10 @@ Per la suite completa usare `make test`. Non è un benchmark.
 CPU e algoritmi KEM/SIG; lo stesso oggetto pubblico appare nel campo opzionale
 `env` del primo record di setup di ogni run, mantenendo schema_version=2.
 Installazione reale tentata ed esito sono documentati in `docs/decisions.md`.
-Il binding 0.16.0.1 è installato, ma la libreria nativa non è stata compilata:
-manca CMake e non sono state introdotte dipendenze ulteriori. I test reali restano
-skip espliciti, mentre `make test-real` deve fallire finché il cluster non è pronto.
+Il 2026-10-30 liboqs 0.16.0 (commit 5a1a854b) e il binding 0.16.0.1 sono stati
+compilati e verificati: suite completa 81 passati, 1 saltato. Il test saltato è
+l'interoperabilità liboqs/OpenSSL, perché OpenSSL 3.0.12 non supporta ML-KEM
+(serve ≥3.5). `make test-real` fallisce finché quel test è saltato.
 
 ## Chiavi autenticate e policy di partecipazione
 

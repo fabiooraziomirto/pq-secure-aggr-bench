@@ -1,0 +1,16 @@
+# Second model (Qwen3.5-0.8B-Base, same family, smaller): reduced replication of the main design.
+# PROVISIONAL: clamp_bound and clip must be recalibrated on this model (calibrate_bounds) and the protocol
+# (rounds, lr) checked with a one-seed pilot before use; values below are the 2B ones, placeholders.
+rounds: 4
+lr: 2.0e-4
+micro_batch: 4
+logical_batch: 32
+clamp_bound: 0.02
+clip: 4.0
+delta: 1.0e-5
+seeds: [1, 2, 3]
+dp_levels: {none: null, eps8: 8.0}
+configs:
+  - {scheme: N, levels: [none, eps8]}
+  - {scheme: A, levels: [none, eps8]}
+  - {scheme: B, levels: [none]}

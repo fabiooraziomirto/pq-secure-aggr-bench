@@ -340,3 +340,12 @@ def test_setup_and_rekey_count_concrete_confirmation_messages(fake_kem_factory, 
             received[receiver] += len(message)
     assert agg.stats().bytes_sent == sent
     assert agg.stats().bytes_received == received
+
+
+@pytest.mark.parametrize("bad", [np.array([2., 0.]), np.array([np.inf, 0.])])
+def test_invalid_update_is_rejected_before_the_round_is_consumed(fake_kem_factory, bad):
+    agg = make(fake_kem_factory)
+    updates = {site: np.array([0.25, -0.5]) for site in SITES}
+    with pytest.raises(ValueError, match="clip_bound or is not finite"):
+        agg.aggregate_round(0, dict(updates, **{SITES[1]: bad}))
+    np.testing.assert_allclose(agg.aggregate_round(0, updates), sum(updates.values()), atol=1e-3)

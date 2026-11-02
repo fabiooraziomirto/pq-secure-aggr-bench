@@ -1,0 +1,18 @@
+# Simulator cost runs on synthetic updates: no model, no clinical data, no DP noise.
+# Public metadata only; identities are ephemeral and never logged.
+run_id: sim-costs-v1
+sites: [A, B, C]
+clip_bound: 1.0
+# Fixed point for A/C: n * clip * 2^24 < 2^39 allows up to 32768 sites.
+scale_bits: 24
+modulus_bits: 40
+# CKKS for B: 128-bit classical security per OpenFHE, 8192 slots.
+ring_dim: 16384
+scaling_mod_size: 50
+dp_level: none
+# Public reproducibility seed for synthetic updates; never a cryptographic seed.
+run_seed: 20261030
+rekey_every_rounds: null
+auth:
+  # Ephemeral ML-DSA-65 identities generated in-process for cost measurement only.
+  method: mldsa_ephemeral_simulation

@@ -1,0 +1,37 @@
+# Three sites plus a reducer on one host. Not started in the authoring session.
+#   NETEM_PROFILE=wan docker compose -f container/compose.yaml up -d
+# Profiles come from configs/network_profiles.yaml. Set CPUSET_A/B/C/REDUCER to
+# disjoint cores that exist on the host (see `docker info` / the cgroup cpuset);
+# the defaults assume contiguous cores 0-15.
+x-agent: &agent
+  image: pqfl-crypto
+  cap_add: [NET_ADMIN]
+  environment:
+    NETEM_PROFILE: ${NETEM_PROFILE:-lan}
+services:
+  site-a:
+    <<: *agent
+    environment: {ACTOR: A, NETEM_PROFILE: "${NETEM_PROFILE:-lan}"}
+    cpuset: "${CPUSET_A:-0-3}"
+  site-b:
+    <<: *agent
+    environment: {ACTOR: B, NETEM_PROFILE: "${NETEM_PROFILE:-lan}"}
+    cpuset: "${CPUSET_B:-4-7}"
+  site-c:
+    <<: *agent
+    environment: {ACTOR: C, NETEM_PROFILE: "${NETEM_PROFILE:-lan}"}
+    cpuset: "${CPUSET_C:-8-11}"
+  reducer:
+    <<: *agent
+    environment: {ACTOR: reducer, NETEM_PROFILE: "${NETEM_PROFILE:-lan}"}
+    cpuset: "${CPUSET_REDUCER:-12-15}"
+  # Controller: no emulation needed (timings are taken inside the agents).
+  #   docker compose -f container/compose.yaml run --rm controller \
+  #     python scripts/net_replay.py --ledger /ledgers/C-ledger.json --profile $NETEM_PROFILE \
+  #       --repetitions 30 --warmup 3 --output /ledgers/C-$NETEM_PROFILE-net.json \
+  #       --agents A=site-a:9000 B=site-b:9000 C=site-c:9000 reducer=reducer:9000
+  controller:
+    image: pqfl-crypto
+    profiles: [tools]
+    volumes: ["../runs:/ledgers"]
+    depends_on: [site-a, site-b, site-c, reducer]

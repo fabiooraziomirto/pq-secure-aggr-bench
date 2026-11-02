@@ -1,0 +1,18 @@
+# T14: aggregation cost at the ACTUAL adapter dimension of the training runs (Qwen3.5-2B-Base, LoRA rank 8 on all
+# text linear modules: 8,409,600 float32 parameters), three sites. Includes the representation-matched
+# unprotected baseline N-FP (same 40-bit fixed point as A and C, no masks) next to N (float32).
+# Heavy HE cells are allowed to take longer than in campaign 3 (net_cap_s 7200): B and B-BGV need about 22 min per
+# replayed WAN round at this size, so they get min_repetitions samples (3), only descriptive.
+policy:
+  repetitions: 30
+  warmup: 3
+  min_repetitions: 3
+  cell_budget_s: 1200
+  net_cap_s: 7200
+percentiles: [50, 95, 99]
+groups:
+  - name: main
+    schemes: [N, N-FP, A, B, B-BGV, C]
+    sites: [3]
+    vector_sizes: [8409600]
+    profiles: [lan, wan]

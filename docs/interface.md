@@ -191,13 +191,45 @@ compilata per CMake mancante; dettagli e provenienza KAT in decisions.md.
 
 ## Consegna B e C e conformità
 
-AGGREGATOR_REGISTRY contiene A, B e C. B e C oggi sono **INSECURE_STUB**:
+AGGREGATOR_REGISTRY contiene A, B, B-BGV, C e i due schemi con dropout (`A-dropout`, `B-BGV-threshold`, politica `quorum`, coperti da `tests/test_dropout*.py` e non dalla suite `all_or_abort`), tutti implementati (C: secret sharing
+additivo; B: CKKS a soglia, vedi sotto). `InsecureSumStub` è la baseline **INSECURE_STUB**:
 somma in chiaro con float64 little-endian, payload realmente serializzati e
 consegnati nella stella, risultato diffuso a tutti. Nessuna HE, MPC, cifratura
 o autenticazione. Questi byte descrivono solo gli stub, mai costi CKKS/MPC.
 Il chiamante deve etichettare gli esperimenti come stub, non risultati B/C reali.
 
-Sostituire il core mantenendo ABC e suite tests/test_aggregator_contract.py.
+**Schema C.** Sottoclasse di A: stesso setup autenticato con KEM ibrido e stessa
+fase auth, quindi costi di setup confrontabili. Nel round ogni sito divide
+l'update quantizzato in n share additive mod 2^modulus_bits (n-1 uniformi da
+os.urandom), invia a ogni peer la sua share sigillata con ChaCha20-Poly1305 sotto
+una chiave HKDF del segreto di coppia (epoca, round, direzione), somma le share
+ricevute e invia la somma parziale al reducer, che somma e diffonde. Traffico del
+round: n(n-1) messaggi sito-sito di dimensione tensore+16 byte (tag), più la
+stella con il reducer; A invia O(n) messaggi. Stesso simulatore in-process di A.
+
+**Schema B.** CKKS n-di-n con OpenFHE 1.6.1 (ring 2^14, scaling 50 bit, 8192 slot).
+Setup: catena di chiavi sequenziale (il sito minimo genera, gli altri derivano la
+chiave congiunta dalla precedente), l'ultimo diffonde la chiave pubblica finale;
+ogni chiave pubblica viaggia con prova di autenticazione. Round: i siti inviano
+ciphertext, il reducer somma omomorficamente e diffonde, i siti restituiscono
+decifrature parziali (il primo come lead), il reducer fonde e diffonde la somma in
+float64. Nessun KEM né canale segreto: i ciphertext sono già cifrati. Vettori più
+lunghi di 8192 elementi usano più ciphertext. Errore osservato ~1e-12 per valori
+≤1 (tolleranza dei test 1e-8). Fasi: crypto per operazioni HE, auth per le chiavi,
+compute per il resto. Limite noto: decifrature parziali senza noise flooding.
+
+**Schema B-BGV** (`scheme_b_bgv.py`, `he/bgv.py`, registro `B-BGV`). Stessa catena di
+chiavi, autenticazione, stadi e traffico di B, con BGV a soglia di OpenFHE e noise
+flooding multiparty attivo. Le somme sono intere esatte: aggiornamenti quantizzati a
+2^-scale_bits (default 20), modulo del testo in chiaro primo di 32 bit con congruenza
+al batching (1 mod 2N), 16384 slot per ciphertext (il doppio di CKKS). Al setup si
+verifica n · round(clip · 2^scale_bits) < t/2, quindi nessun overflow. Il contesto
+dipende dal numero di parti, quindi si crea in `setup`. L'unico errore è la
+quantizzazione. Risultato inviato come int64. Il flooding allarga il modulo del
+ciphertext (da 787 KB a 1,31 MB misurati), segno che è attivo; non dimostra che le
+decifrature parziali siano simulabili: serve la revisione esperta.
+
+Sostituire un core mantenendo ABC e suite tests/test_aggregator_contract.py.
 Dichiarare numerica/tolleranze, actors, partecipazione, rekey e collegamenti;
 registrare ogni messaggio e misurare le stesse fasi. CKKS dovrà dichiarare
 parametri e precisione; MPC dominio e conversioni. Le policy degli stub non

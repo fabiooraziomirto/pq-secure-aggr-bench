@@ -132,11 +132,13 @@ def test_sigma_zero_is_the_noise_free_reference_with_identical_batches(tmp_path)
     assert free["share_sigma"] == 0.0 and free["aggregate_sigma"] == 0.0
     a, b = np.load(tmp_path / "uf" / "round-0000.npz"), np.load(tmp_path / "un" / "round-0000.npz")
     scale, clip = 2.0 ** 16, KW["clip"]
+    noises = []
     for site in SITES:
         exact, with_noise = a[f"update:{site}"], b[f"update:{site}"]
         assert np.array_equal(exact * scale, np.rint(exact * scale))            # integers on the 2^-16 grid
-        noise = (with_noise - exact)                                            # gradient units
-        assert noise.var() == pytest.approx((clip * 0.5 / math.sqrt(3)) ** 2, rel=0.1)
+        noises.append(with_noise - exact)                                       # gradient units
+    # the toy model has 128 coordinates: pooling the 3 sites gives 384 samples, relative error of the variance ~7 %
+    assert np.concatenate(noises).var() == pytest.approx((clip * 0.5 / math.sqrt(3)) ** 2, rel=0.25)
     assert free["history"][0]["sites"]["a"]["examples"] == noisy["history"][0]["sites"]["a"]["examples"]
 
 

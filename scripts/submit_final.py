@@ -4,6 +4,8 @@
 Arguments common to every job (data paths, model, base NLL) come from a finished pilot job given with
 --template; the protocol comes from configs/final_campaign.yaml. Jobs already queued or finished are skipped,
 so the script can be run again after an interruption. Seeds must differ from the pilot seed 0.
+The spec must declare secret_randomness (true or false): it is passed to every DP job, so that the DP noise
+of a deployable release never silently derives from the public seed.
 """
 import argparse
 import json
@@ -13,6 +15,29 @@ import sys
 import yaml
 
 from pqfl.train.worker import STATES, submit
+
+
+def build_jobs(spec: dict, common: dict, seeds, *, out_root: str, oqs_path: str, tag: str = ""):
+    """(job_id, pilot_run arguments) pairs, seed-major: after each seed the whole design is complete."""
+    secret = spec.get("secret_randomness")
+    if not isinstance(secret, bool):
+        raise ValueError("The spec must declare secret_randomness: true (noise from os.urandom, deployable DP) "
+                         "or false (noise from the public seed, reproducible but removable)")
+    jobs = []
+    for seed in seeds:
+        for entry in spec["configs"]:
+            for level in entry["levels"]:
+                epsilon = spec["dp_levels"][level]
+                name = f"{entry['scheme']}-{level}-s{seed}" + (f"-{tag}" if tag else "")
+                job = dict(common, scheme=entry["scheme"], epsilon=epsilon, delta=spec["delta"], rounds=spec["rounds"],
+                           lr=spec["lr"], seed=seed, micro_batch=spec["micro_batch"],
+                           logical_batch=spec["logical_batch"], out_dir=os.path.join(out_root, name))
+                if entry["scheme"] != "Z":
+                    job.update(clamp_bound=spec["clamp_bound"], oqs_path=oqs_path)
+                if epsilon is not None:
+                    job.update(clip=spec["clip"], secret_randomness=secret)
+                jobs.append((f"final-{name}", job))
+    return jobs
 
 
 def main():
@@ -41,20 +66,10 @@ def main():
     seeds = args.seeds or spec["seeds"]
     if 0 in seeds or not set(seeds) <= set(spec["seeds"]):
         sys.exit("seeds must belong to the spec and exclude the pilot seed 0")
-    jobs = []
-    for seed in seeds:                       # seed-major: after each seed the whole design is complete
-        for entry in spec["configs"]:
-            for level in entry["levels"]:
-                epsilon = spec["dp_levels"][level]
-                name = f"{entry['scheme']}-{level}-s{seed}" + (f"-{args.tag}" if args.tag else "")
-                job = dict(common, scheme=entry["scheme"], epsilon=epsilon, delta=spec["delta"], rounds=spec["rounds"],
-                           lr=spec["lr"], seed=seed, micro_batch=spec["micro_batch"],
-                           logical_batch=spec["logical_batch"], out_dir=os.path.join(args.out_root, name))
-                if entry["scheme"] != "Z":
-                    job.update(clamp_bound=spec["clamp_bound"], oqs_path=args.oqs_path)
-                if epsilon is not None:
-                    job["clip"] = spec["clip"]
-                jobs.append((f"final-{name}", job))
+    try:
+        jobs = build_jobs(spec, common, seeds, out_root=args.out_root, oqs_path=args.oqs_path, tag=args.tag)
+    except ValueError as exc:
+        sys.exit(str(exc))
     queued = 0
     for job_id, job in jobs:
         exists = any(os.path.exists(os.path.join(args.queue, state, f"{job_id}.json")) for state in STATES)

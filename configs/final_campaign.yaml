@@ -7,6 +7,9 @@ logical_batch: 32
 clamp_bound: 0.02          # B_inf of every scheme, N included (matched encoding)
 clip: 4.0                  # DP clipping norm
 delta: 1.0e-5
+# true: DP noise and batches from os.urandom (deployable release, not reproducible);
+# false: from the public seed (reproducible, noise removable by whoever knows the seed). To be decided.
+secret_randomness: TODO
 seeds: [1, 2, 3, 4, 5]
 dp_levels: {none: null, eps8: 8.0, eps2: 2.0}
 configs:                   # scheme x DP level; Z is the non-private centralized reference

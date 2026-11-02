@@ -44,6 +44,15 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if item.get_closest_marker("requires_openfhe"):
                 item.add_marker(skip)
+    # Skipped (not failed) when liboqs is absent; --fail-on-oqs-skip still turns any such skip into a failure.
+    from pqfl.kem.backends import BackendUnavailable, load_oqs
+    try:
+        load_oqs()
+    except BackendUnavailable as exc:
+        skip = pytest.mark.skip(reason=str(exc))
+        for item in items:
+            if item.get_closest_marker("requires_oqs"):
+                item.add_marker(skip)
 
 
 def pytest_addoption(parser):

@@ -1,4 +1,4 @@
-"""Dropout recovery: A (seed reveal) and B-BGV (t-of-n key sharing)."""
+"""Dropout recovery: A (per-round mask key reveal) and B-BGV (t-of-n key sharing)."""
 import numpy as np
 import pytest
 
@@ -45,6 +45,27 @@ def test_a_recovery_traffic_and_stages(fake_kem_factory):
     assert all(r == "reducer" for _, r, _ in stages[2]) and all(size == 32 for *_, size in stages[2])
     assert all(s == "reducer" for s, _, _ in stages[1]) and {r for _, r, _ in stages[3]} == {"a", "c"}
     assert stats.bytes_sent["b"] == 0 and stats.bytes_received["b"] == 0
+
+
+def test_a_recovery_reveals_only_this_rounds_mask_keys(fake_kem_factory, monkeypatch):
+    """Revealing the epoch seed would unmask every earlier upload of the dropped site in the epoch;
+    the per-round key opens this round's masks only."""
+    from pqfl.logging.metrics import ByteCounter
+    from pqfl.masking.core import mask_key
+    agg = make_a(fake_kem_factory, ["a", "b", "c"])
+    seeds = {site: dict(pairs) for site, pairs in agg._site_seeds.items()}
+    agg.aggregate_round(0, updates(["a", "b", "c"]))
+    sent, original = [], ByteCounter.send
+    monkeypatch.setattr(ByteCounter, "send",
+                        lambda self, s, r, m: sent.append((self.stage, s, r, m)) or original(self, s, r, m))
+    agg.aggregate_round(1, updates(["a", "b", "c"], seed=1), dropped={"b"})
+    reveals = {s: m for stage, s, r, m in sent if stage == 2}
+    assert set(reveals) == {"a", "c"}
+    for site in ("a", "c"):
+        pair = tuple(sorted((site, "b")))
+        seed = seeds[site][pair]
+        assert reveals[site] == mask_key(seed, 1, *pair, epoch=0)
+        assert seed not in reveals[site] and mask_key(seed, 0, *pair, epoch=0) != reveals[site]
 
 
 def test_a_quorum_and_validation_fail_before_any_traffic(fake_kem_factory):

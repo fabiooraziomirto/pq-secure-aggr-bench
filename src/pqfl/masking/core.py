@@ -34,16 +34,25 @@ def dequantize(values: Tensor, scale_bits: int, modulus_bits: int) -> Tensor:
     return signed.astype(np.float64) / (2 ** scale_bits)
 
 
-def pairwise_mask(seed: bytes, round_idx: int, left: str, right: str,
-                  shape: tuple[int, ...], modulus_bits: int, *, epoch: int) -> Tensor:
-    validate_parameters(0, modulus_bits)
+def mask_key(seed: bytes, round_idx: int, left: str, right: str, *, epoch: int) -> bytes:
+    """Key of one pair's mask in one round. Revealing it opens that round only, never the epoch seed."""
     if type(epoch) is not int or epoch < 0:
         raise ValueError("Require a nonnegative epoch")
     if type(round_idx) is not int or round_idx < 0 or not left < right:
         raise ValueError("Require nonnegative round and canonical distinct site IDs")
     info = json.dumps(["pqfl/scheme-a/mask/v2", epoch, round_idx, left, right],
                       ensure_ascii=True, separators=(",", ":")).encode()
-    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=info).derive(seed)
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=info).derive(seed)
+
+
+def pairwise_mask(seed: bytes, round_idx: int, left: str, right: str,
+                  shape: tuple[int, ...], modulus_bits: int, *, epoch: int) -> Tensor:
+    validate_parameters(0, modulus_bits)
+    return mask_from_key(mask_key(seed, round_idx, left, right, epoch=epoch), shape, modulus_bits)
+
+
+def mask_from_key(key: bytes, shape: tuple[int, ...], modulus_bits: int) -> Tensor:
+    validate_parameters(0, modulus_bits)
     # A fixed nonce is safe only because each epoch/pair/round has a distinct key.
     stream = Cipher(algorithms.ChaCha20(key, bytes(16)), mode=None).encryptor()
     data = stream.update(bytes(math.prod(shape) * 8)) + stream.finalize()

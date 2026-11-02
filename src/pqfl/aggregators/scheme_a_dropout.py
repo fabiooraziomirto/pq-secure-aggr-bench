@@ -5,7 +5,7 @@ import numpy as np
 from pqfl.aggregators.errors import AggregateOverflowError, MissingParticipantError
 from pqfl.aggregators.scheme_a import SchemeA
 from pqfl.logging.metrics import Metrics
-from pqfl.masking.core import Tensor, dequantize, pairwise_mask, quantize
+from pqfl.masking.core import Tensor, dequantize, mask_from_key, mask_key, quantize
 from pqfl.masking.wire import deserialize_masked, serialize_masked
 
 
@@ -17,12 +17,14 @@ class SchemeADropout(SchemeA):
     """A with recovery from a site that crashes before uploading its masked vector.
 
     Survivors already masked against every peer, so the sum holds uncancelled masks of the
-    dropped sites. The reducer asks each survivor for the pairwise seeds it shares with the
-    dropped sites, recomputes those masks and removes them; the result is the survivors'
-    sum, and the dropped sites leave the session (their pair seeds are deleted).
+    dropped sites. The reducer asks each survivor for this round's mask keys of the pairs it
+    shares with the dropped sites, recomputes those masks and removes them; the result is the
+    survivors' sum, and the dropped sites leave the session (their pair seeds are deleted).
+    Only per-round keys are revealed, never the epoch seeds: earlier uploads of the dropped
+    sites in the same epoch stay masked, also for whoever records the (unencrypted) reveal.
 
     Threat model: crash-stop dropout before upload and a reducer that does not lie about it.
-    A reducer that falsely declares a live site dropped could collect all of its pair seeds
+    A reducer that falsely declares a live site dropped could collect all of its round keys
     and unmask it once its vector arrives; defending against that needs the double masking
     of Bonawitz et al. (2017), which is not implemented. Survivors must answer the request.
     """
@@ -80,7 +82,8 @@ class SchemeADropout(SchemeA):
         for site in survivors:
             with self.metrics.phase_timer("crypto", site=site):
                 wanted = json.loads(requests[site])
-                payload = b"".join(self._site_seeds[site][tuple(sorted((site, d)))] for d in wanted)
+                payload = b"".join(mask_key(self._site_seeds[site][pair], round_idx, *pair, epoch=self.epoch)
+                                   for pair in (tuple(sorted((site, d))) for d in wanted))
             reveals[site] = send(site, "reducer", payload)
         with self.metrics.phase_timer("crypto", site="reducer"):
             total = np.zeros(shape, dtype=np.int64)
@@ -90,8 +93,7 @@ class SchemeADropout(SchemeA):
                 width = len(reveals[site]) // len(dropped_sorted)
                 for k, d in enumerate(dropped_sorted):
                     left, right = sorted((site, d))
-                    mask = pairwise_mask(reveals[site][k * width:(k + 1) * width], round_idx, left, right,
-                                         shape, self.modulus_bits, epoch=self.epoch)
+                    mask = mask_from_key(reveals[site][k * width:(k + 1) * width], shape, self.modulus_bits)
                     # A survivor added +mask when it is the left site and -mask otherwise.
                     total = (total - mask) % modulus if site == left else (total + mask) % modulus
             if np.any(signed_total < -modulus // 2) or np.any(signed_total >= modulus // 2):

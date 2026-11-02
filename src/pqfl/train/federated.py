@@ -35,12 +35,25 @@ def _save(directory, round_idx, vector, history, config):
     os.replace(temporary, final)
 
 
+def _save_updates(directory, round_idx, global_before, deltas):
+    """One file per round: the global vector the sites started from and each site's update as handed to the
+    aggregator (after clamping), i.e. what an adversary reads once the protection of the round is broken."""
+    os.makedirs(directory, exist_ok=True)
+    final = os.path.join(directory, f"round-{round_idx:04d}.npz")
+    temporary = final + ".tmp"
+    with open(temporary, "wb") as handle:
+        np.savez(handle, round=round_idx, global_before=global_before.numpy(),
+                 **{f"update:{site}": delta for site, delta in deltas.items()})
+    os.replace(temporary, final)
+
+
 def run_federated(model, tokenizer, site_items: dict, aggregator, *, rounds: int, train_kwargs: dict, seed: int,
                   checkpoint_dir: str, clamp_bound: float | None = None, evaluate=None, log=print,
-                  train_function=train_local, config: dict | None = None) -> dict:
+                  train_function=train_local, config: dict | None = None, updates_dir: str | None = None) -> dict:
     """Run (or resume) `rounds` federated rounds; returns {"history": [...], "vector": final global vector}.
     `train_kwargs` go to `train_function`: train_local (epochs, micro_batch, accumulation, lr, max_len, eos_id,
-    pad_id) or pqfl.train.dpsgd.train_local_dp (DP-SGD, same notion of seed)."""
+    pad_id) or pqfl.train.dpsgd.train_local_dp (DP-SGD, same notion of seed). With `updates_dir`, every round
+    also saves the per-site updates (sensitive: they may allow reconstructing training text)."""
     sites = sorted(site_items)
     expected = getattr(aggregator, "sites", None)
     if expected is not None and sorted(expected) != sites:
@@ -82,6 +95,8 @@ def run_federated(model, tokenizer, site_items: dict, aggregator, *, rounds: int
         aggregated_at = time.time()
         total = aggregator.aggregate_round(round_idx, deltas)
         record["aggregate_seconds"] = time.time() - aggregated_at
+        if updates_dir is not None:
+            _save_updates(updates_dir, round_idx, global_vector, deltas)
         stats = aggregator.stats() if hasattr(aggregator, "stats") else None
         if stats is not None:
             record["bytes_sent_total"] = int(sum(stats.bytes_sent.values()))

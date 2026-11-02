@@ -128,3 +128,22 @@ def test_the_round_is_checkpointed_before_the_evaluation(tmp_path):
     with pytest.raises(RuntimeError):
         go(tmp_path, 2, evaluate=crashing_evaluation)
     assert sorted(os.listdir(tmp_path)) == ["round-0000.pt"]
+
+
+def test_site_updates_are_saved_with_the_global_vector_they_start_from(tmp_path):
+    start = flatten(Tiny())
+    _, out = go(tmp_path / "checkpoints", 2, updates_dir=str(tmp_path / "updates"))
+    assert sorted(os.listdir(tmp_path / "updates")) == ["round-0000.npz", "round-0001.npz"]
+    first, second = (np.load(tmp_path / "updates" / f"round-{r:04d}.npz") for r in (0, 1))
+    assert int(first["round"]) == 0 and sorted(k for k in first.files if k.startswith("update:")) == \
+        ["update:a", "update:b"]
+    assert np.array_equal(first["global_before"], start.numpy())
+    expected = start.double().numpy() + (first["update:a"] + first["update:b"]) / 2
+    np.testing.assert_allclose(second["global_before"], expected, atol=1e-6)
+    final = second["global_before"] + (second["update:a"] + second["update:b"]) / 2
+    np.testing.assert_allclose(out["vector"].numpy(), final, atol=1e-6)
+
+
+def test_without_updates_dir_nothing_but_checkpoints_is_written(tmp_path):
+    go(tmp_path, 1)
+    assert os.listdir(tmp_path) == ["round-0000.pt"]

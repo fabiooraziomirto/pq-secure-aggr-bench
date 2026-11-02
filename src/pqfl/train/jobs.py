@@ -279,10 +279,11 @@ def pilot_run(model_path: str, rows_path: str, validation_path: str, holdout_pat
               delta: float = 1e-5, rounds: int = 10, lr: float = 2e-4, seed: int = 0, micro_batch: int = 4,
               logical_batch: int = 32, clip: float | None = None, clamp_bound: float | None = None,
               eval_validation: int = 500, eval_holdout: int = 300, max_len: int = 512,
-              oqs_path: str | None = None, secret_randomness: bool = False) -> dict:
+              oqs_path: str | None = None, secret_randomness: bool = False, save_updates: bool = False) -> dict:
     """One full configuration: three sites, `rounds` federated rounds with the given aggregation scheme and
     (optionally) example-level DP-SGD at the given epsilon, per-round quick evaluation, final scoring.
-    secret_randomness draws the DP noise and batches from os.urandom (not reproducible, see dpsgd)."""
+    secret_randomness draws the DP noise and batches from os.urandom (not reproducible, see dpsgd).
+    save_updates writes the per-site updates of every round to out_dir/updates (sensitive, see run_federated)."""
     if epsilon is not None and (clip is None or not clip > 0):
         raise ValueError("A DP run (epsilon set) needs a positive clipping norm `clip`")
     if epsilon is not None and scheme == "Z":
@@ -365,7 +366,8 @@ def pilot_run(model_path: str, rows_path: str, validation_path: str, holdout_pat
     started = time.time()
     out = run_federated(model, tokenizer, site_items, aggregator, rounds=rounds, train_kwargs=kwargs, seed=seed,
                         checkpoint_dir=os.path.join(out_dir, "checkpoints"), clamp_bound=clamp_bound,
-                        evaluate=quick_evaluation, log=print, train_function=train_function, config=config)
+                        evaluate=quick_evaluation, log=print, train_function=train_function, config=config,
+                        updates_dir=os.path.join(out_dir, "updates") if save_updates else None)
     train_seconds = time.time() - started
     train_peak_gb = torch.cuda.max_memory_allocated() / 2 ** 30
     del model

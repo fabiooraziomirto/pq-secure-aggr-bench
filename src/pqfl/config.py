@@ -9,6 +9,8 @@ import yaml
 
 SCHEMES = ("A", "B", "B-BGV", "C", "N", "N-FP", "STUB", "A-dropout", "B-BGV-threshold")
 AUTH_METHODS = ("mldsa_ephemeral_simulation", "none_insecure")
+# x25519_classical is the quantum-vulnerable baseline of the HNDL experiments; absent means hybrid.
+KEMS = ("hybrid", "x25519_classical")
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class RunConfig:
     bgv_scale_bits: int = 20
     bgv_plaintext_bits: int = 31
     dropout_threshold: int | None = None
+    kem: str = "hybrid"
 
     def config_hash(self, scheme: str) -> str:
         return hashlib.sha256(self.canonical + scheme.encode()).hexdigest()
@@ -66,6 +69,9 @@ def load_run_config(path) -> RunConfig:
     threshold = config.get("dropout_threshold")
     if threshold is not None and (isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 2):
         raise ValueError("dropout_threshold must be null or an integer of at least 2")
+    kem = config.get("kem", "hybrid")
+    if kem not in KEMS:
+        raise ValueError(f"kem must be one of {KEMS}")
     canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     return RunConfig(run_id=_require(config, "run_id", str), sites=tuple(sites),
                      clip_bound=float(clip_bound), scale_bits=_require(config, "scale_bits", int),
@@ -76,4 +82,4 @@ def load_run_config(path) -> RunConfig:
                      rekey_every_rounds=rekey, auth_method=method, canonical=canonical,
                      bgv_scale_bits=config.get("bgv_scale_bits", 20),
                      bgv_plaintext_bits=config.get("bgv_plaintext_bits", 31),
-                     dropout_threshold=threshold)
+                     dropout_threshold=threshold, kem=kem)

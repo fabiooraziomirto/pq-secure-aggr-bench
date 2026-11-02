@@ -280,12 +280,13 @@ def pilot_run(model_path: str, rows_path: str, validation_path: str, holdout_pat
               logical_batch: int = 32, clip: float | None = None, clamp_bound: float | None = None,
               eval_validation: int = 500, eval_holdout: int = 300, max_len: int = 512,
               oqs_path: str | None = None, secret_randomness: bool = False, save_updates: bool = False,
-              rekey_every: int | None = None) -> dict:
+              rekey_every: int | None = None, kem: str = "hybrid") -> dict:
     """One full configuration: three sites, `rounds` federated rounds with the given aggregation scheme and
     (optionally) example-level DP-SGD at the given epsilon, per-round quick evaluation, final scoring.
     secret_randomness draws the DP noise and batches from os.urandom (not reproducible, see dpsgd).
     save_updates writes the per-site updates of every round to out_dir/updates (sensitive, see run_federated).
-    rekey_every = k starts a new key epoch every k rounds (secure schemes only; default: one epoch per session)."""
+    rekey_every = k starts a new key epoch every k rounds (secure schemes only; default: one epoch per session).
+    kem selects the key exchange of A, C and the dropout variants ("x25519_classical": quantum-vulnerable)."""
     if epsilon is not None and (clip is None or not clip > 0):
         raise ValueError("A DP run (epsilon set) needs a positive clipping norm `clip`")
     if epsilon is not None and scheme == "Z":
@@ -327,6 +328,8 @@ def pilot_run(model_path: str, rows_path: str, validation_path: str, holdout_pat
                   sites=sites, secret_randomness=secret_randomness)
     if rekey_every is not None:          # recorded only when set, so earlier runs keep their configuration
         config.update(rekey_every=rekey_every)
+    if kem != "hybrid":
+        config.update(kem=kem)
     if epsilon is None:
         train_function, kwargs = train_local, dict(common, accumulation=logical_batch // micro_batch)
     else:
@@ -352,7 +355,8 @@ def pilot_run(model_path: str, rows_path: str, validation_path: str, holdout_pat
         from pqfl.train.aggregation import build_training_aggregator
         aggregator = build_training_aggregator(scheme, sites, clip_bound=clamp_bound, out_dir=out_dir, seed=seed,
                                                dp_level="none" if epsilon is None else f"eps{epsilon:g}",
-                                               run_id=os.path.basename(out_dir.rstrip("/")), rekey_every=rekey_every)
+                                               run_id=os.path.basename(out_dir.rstrip("/")), rekey_every=rekey_every,
+                                               kem=kem)
     json.dump(config, open(os.path.join(out_dir, "config.json"), "w"), indent=1)
     validation, holdout = _rows(validation_path)[:eval_validation], _rows(holdout_path)
     holdout = [r for r, dup in zip(holdout, duplicates_of(holdout, list(rows.values()))) if not dup][:eval_holdout]

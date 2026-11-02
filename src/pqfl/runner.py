@@ -36,7 +36,21 @@ def build_authenticator(cfg: RunConfig, sites):
     return MLDSAAuth(public, secret, {site: dict(public) for site in sites})
 
 
+KEM_SCHEMES = ("A", "C", "A-dropout", "B-BGV-threshold")
+
+
+def build_kem(cfg: RunConfig):
+    if cfg.kem == "x25519_classical":
+        from pqfl.kem.classical import ClassicalX25519KEM
+        return ClassicalX25519KEM()
+    from pqfl.kem.backends import LibOQSKEM
+    from pqfl.kem.hybrid import HybridKEM
+    return HybridKEM(LibOQSKEM())
+
+
 def build_aggregator(scheme, cfg: RunConfig, sites, writer):
+    if cfg.kem != "hybrid" and scheme not in KEM_SCHEMES:
+        raise ValueError(f"kem={cfg.kem} is meaningless for {scheme}, which uses no KEM")
     if scheme == "STUB":
         return InsecureSumStub(writer=writer)
     if scheme == "N":
@@ -49,19 +63,15 @@ def build_aggregator(scheme, cfg: RunConfig, sites, writer):
                                             ring_dim=cfg.ring_dim, plaintext_bits=cfg.bgv_plaintext_bits,
                                             authenticator=auth, writer=writer)
     if scheme == "B-BGV-threshold":
-        from pqfl.kem.backends import LibOQSKEM
-        from pqfl.kem.hybrid import HybridKEM
         threshold = cfg.dropout_threshold or max(2, len(sites) - 1)   # tolerates one dropout by default
-        return AGGREGATOR_REGISTRY[scheme](HybridKEM(LibOQSKEM()), clip_bound=cfg.clip_bound, threshold=threshold,
+        return AGGREGATOR_REGISTRY[scheme](build_kem(cfg), clip_bound=cfg.clip_bound, threshold=threshold,
                                            scale_bits=cfg.bgv_scale_bits, ring_dim=cfg.ring_dim,
                                            plaintext_bits=cfg.bgv_plaintext_bits, authenticator=auth, writer=writer)
     if scheme == "B":
         return AGGREGATOR_REGISTRY["B"](clip_bound=cfg.clip_bound, ring_dim=cfg.ring_dim,
                                         scaling_mod_size=cfg.scaling_mod_size,
                                         authenticator=auth, writer=writer)
-    from pqfl.kem.backends import LibOQSKEM
-    from pqfl.kem.hybrid import HybridKEM
-    return AGGREGATOR_REGISTRY[scheme](HybridKEM(LibOQSKEM()), clip_bound=cfg.clip_bound,
+    return AGGREGATOR_REGISTRY[scheme](build_kem(cfg), clip_bound=cfg.clip_bound,
                                        scale_bits=cfg.scale_bits, modulus_bits=cfg.modulus_bits,
                                        authenticator=auth, writer=writer)
 
